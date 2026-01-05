@@ -817,6 +817,43 @@ class F1DesktopPro:
         self.results_table.pack(side="left", fill="both", expand=True)
         scrollbar_y.pack(side="right", fill="y")
 
+        # Pit stop summary
+        pit_container = ctk.CTkFrame(parent, fg_color=ColorPalette.BG_ELEVATED,
+                                     corner_radius=10)
+        pit_container.pack(fill="x", padx=10, pady=(0, 10))
+
+        pit_header = ctk.CTkFrame(pit_container, fg_color="transparent")
+        pit_header.pack(fill="x", padx=15, pady=12)
+        ctk.CTkLabel(pit_header, text="⛽ Boxenstopps",
+                    font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
+        self.pit_info_label = ctk.CTkLabel(pit_header, text="Nur für Rennen verfügbar",
+                                          font=ctk.CTkFont(size=11),
+                                          text_color=ColorPalette.TEXT_SECONDARY)
+        self.pit_info_label.pack(side="right")
+
+        pit_frame = ctk.CTkFrame(pit_container, fg_color="transparent")
+        pit_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        pit_scrollbar_y = tk.Scrollbar(pit_frame, orient="vertical")
+
+        pit_columns = ("Fahrer", "Stopps", "Ø Stopp", "Schnellster")
+        self.pit_table = tk_ttk.Treeview(
+            pit_frame,
+            columns=pit_columns,
+            show="headings",
+            yscrollcommand=pit_scrollbar_y.set,
+            style="Results.Treeview"
+        )
+
+        pit_widths = {"Fahrer": 160, "Stopps": 80, "Ø Stopp": 120, "Schnellster": 120}
+        for col in pit_columns:
+            self.pit_table.heading(col, text=col)
+            self.pit_table.column(col, width=pit_widths.get(col, 100), anchor="center")
+
+        self.pit_table.pack(side="left", fill="both", expand=True)
+        pit_scrollbar_y.config(command=self.pit_table.yview)
+        pit_scrollbar_y.pack(side="right", fill="y")
+
     def build_driver_championship_tab(self, parent):
         """Erstellt Driver Championship Tab"""
         # Split view
@@ -1119,6 +1156,20 @@ class F1DesktopPro:
         self.sector_canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
         self.style_plot(self.sector_ax)
 
+        # Consistency Analysis
+        consistency_frame = ctk.CTkFrame(right, fg_color=ColorPalette.BG_ELEVATED,
+                                        corner_radius=10)
+        consistency_frame.pack(fill="both", expand=True, pady=(5, 0))
+
+        ctk.CTkLabel(consistency_frame, text="📏 Konsistenz",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=10)
+
+        self.consistency_fig = Figure(figsize=(6, 4), facecolor=ColorPalette.BG_CARD)
+        self.consistency_ax = self.consistency_fig.add_subplot(111, facecolor=ColorPalette.BG_ELEVATED)
+        self.consistency_canvas = FigureCanvasTkAgg(self.consistency_fig, master=consistency_frame)
+        self.consistency_canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        self.style_plot(self.consistency_ax)
+
     def style_plot(self, ax):
         """Stilisiert einen Matplotlib Axes"""
         ax.set_facecolor(ColorPalette.BG_ELEVATED)
@@ -1218,6 +1269,7 @@ class F1DesktopPro:
         self.update_compare_drivers()
         self.plot_pace_analysis()
         self.plot_sector_analysis()
+        self.plot_consistency_analysis()
         self.update_race_results()
         
         self.loading.hide()
@@ -1245,6 +1297,7 @@ class F1DesktopPro:
                 self.race_info_label.pack(pady=20)
                 self.results_table.delete(*self.results_table.get_children())
                 self.podium.clear()
+                self.clear_pit_stop_summary()
                 return
             else:
                 # Hide info message
@@ -1301,6 +1354,7 @@ class F1DesktopPro:
                 self.results_table.tag_configure('p1', background=ColorPalette.GOLD, foreground="#000000")
                 self.results_table.tag_configure('p2', background=ColorPalette.SILVER, foreground="#000000")
                 self.results_table.tag_configure('p3', background=ColorPalette.BRONZE, foreground="#000000")
+                self.update_pit_stop_summary()
                 return
             
             # Clear table
@@ -1377,11 +1431,13 @@ class F1DesktopPro:
             self.results_table.tag_configure('p1', background=ColorPalette.GOLD, foreground="#000000")
             self.results_table.tag_configure('p2', background=ColorPalette.SILVER, foreground="#000000")
             self.results_table.tag_configure('p3', background=ColorPalette.BRONZE, foreground="#000000")
+            self.update_pit_stop_summary()
             
         except Exception as e:
             print(f"Race Results Error: {e}")
             import traceback
             traceback.print_exc()
+            self.clear_pit_stop_summary()
 
     def show_championship(self):
         """Zeigt Championship Standings"""
@@ -1956,6 +2012,74 @@ class F1DesktopPro:
         except Exception as e:
             print(f"Sector Analysis Error: {e}")
 
+    def plot_consistency_analysis(self):
+        """Zeigt die Konstanz der Fahrer über die Runden"""
+        if not self.session or not getattr(self, "consistency_ax", None):
+            return
+
+        try:
+            laps = self.session.laps
+            valid_laps = laps[laps['LapTime'].notna()]
+
+            if valid_laps.empty:
+                return
+
+            ax = self.consistency_ax
+            ax.clear()
+
+            consistency = []
+            for driver in sorted(valid_laps['Driver'].dropna().unique()):
+                driver_laps = valid_laps[valid_laps['Driver'] == driver]['LapTime'].dropna()
+                if len(driver_laps) < 3:
+                    continue
+
+                lap_seconds = []
+                for t in driver_laps:
+                    if hasattr(t, 'total_seconds'):
+                        lap_seconds.append(t.total_seconds())
+                    else:
+                        try:
+                            lap_seconds.append(float(t))
+                        except (TypeError, ValueError):
+                            continue
+
+                if not lap_seconds:
+                    continue
+
+                variability = float(np.std(lap_seconds))
+                median_time = float(np.median(lap_seconds))
+                consistency.append((driver, variability, median_time))
+
+            if not consistency:
+                return
+
+            consistency = sorted(consistency, key=lambda x: x[1])[:10]
+            drivers = [c[0] for c in consistency]
+            deviations = [c[1] for c in consistency]
+            medians = [c[2] for c in consistency]
+
+            bars = ax.barh(drivers, deviations, color=ColorPalette.ACCENT_PURPLE, alpha=0.85)
+
+            for bar, dev, median in zip(bars, deviations, medians):
+                ax.text(
+                    bar.get_width() + 0.02,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"σ {dev:.3f}s | Median {median:.3f}s",
+                    va='center',
+                    color=ColorPalette.TEXT_PRIMARY,
+                    fontsize=9
+                )
+
+            ax.set_xlabel('Standardabweichung (s)')
+            ax.set_title('Rundenkonstanz (Top 10)', pad=12, fontweight='bold')
+            ax.invert_yaxis()
+
+            self.style_plot(ax)
+            self.consistency_canvas.draw()
+
+        except Exception as e:
+            print(f"Consistency Plot Error: {e}")
+
     # === EVENTS ===
     
     def on_lap_selected(self, event):
@@ -2103,6 +2227,74 @@ class F1DesktopPro:
             return str(time_val)
         except:
             return str(time_val)
+
+    def format_seconds(self, seconds: Optional[float]):
+        """Hilfsfunktion für Sekundenwerte"""
+        if seconds is None or pd.isna(seconds):
+            return "—"
+        try:
+            return f"{float(seconds):.3f}s"
+        except (TypeError, ValueError):
+            return "—"
+
+    def clear_pit_stop_summary(self):
+        """Leert die Boxenstopp-Tabelle"""
+        if hasattr(self, 'pit_table'):
+            self.pit_table.delete(*self.pit_table.get_children())
+        if hasattr(self, 'pit_info_label'):
+            self.pit_info_label.configure(text="Nur für Rennen verfügbar")
+
+    def update_pit_stop_summary(self):
+        """Aktualisiert die Boxenstopp-Übersicht"""
+        if not getattr(self, 'pit_table', None):
+            return
+
+        self.clear_pit_stop_summary()
+
+        if not self.session or self.ses_var.get() != 'R':
+            return
+
+        try:
+            laps = self.session.laps
+            drivers = sorted(laps['Driver'].dropna().unique())
+            for driver in drivers:
+                driver_laps = laps[laps['Driver'] == driver]
+                pit_windows = driver_laps[['PitInTime', 'PitOutTime']].dropna()
+                durations = []
+                for _, pit in pit_windows.iterrows():
+                    pit_in = pit.get('PitInTime')
+                    pit_out = pit.get('PitOutTime')
+                    if pd.notna(pit_in) and pd.notna(pit_out):
+                        delta = pit_out - pit_in
+                        if hasattr(delta, 'total_seconds'):
+                            delta = delta.total_seconds()
+                        try:
+                            delta = float(delta)
+                        except (TypeError, ValueError):
+                            delta = None
+                        if delta is not None and delta > 0:
+                            durations.append(delta)
+
+                stop_count = len(durations)
+                avg_time = np.mean(durations) if durations else None
+                best_time = min(durations) if durations else None
+
+                self.pit_table.insert(
+                    "",
+                    "end",
+                    values=(
+                        driver,
+                        stop_count,
+                        self.format_seconds(avg_time),
+                        self.format_seconds(best_time)
+                    )
+                )
+
+            self.pit_info_label.configure(text="Daten aus FastF1")
+
+        except Exception as e:
+            print(f"Pit Stop Summary Error: {e}")
+            self.pit_info_label.configure(text="Keine Boxenstopp-Daten")
 
     def show_error(self, title, message):
         """Zeigt Fehlermeldung"""
