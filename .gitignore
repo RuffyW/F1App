@@ -1,0 +1,14 @@
+__pycache__/
+.venv/
+.env
+.env.local
+.cache/
+node_modules/
+.next/
+*.log
+dist/
+build/
+*.sqlite3
+coverage/
+frontend/.next/
+backend/.pytest_cache/
