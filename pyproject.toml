@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "f1desktoppro"
+version = "1.0.0"
+description = "F1 Desktop Pro - Professional F1 Data Analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastf1",
+  "pandas",
+  "numpy",
+  "matplotlib",
+  "customtkinter",
+  "Pillow",
+  "scipy",
+  "openpyxl",
+  "seaborn",
+  "requests",
+]
+
+[project.scripts]
+f1desktoppro = "f1:main"
+
+[tool.setuptools]
+packages = ["f1desktoppro"]
+py-modules = ["f1"]

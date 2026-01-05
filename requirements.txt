@@ -1,0 +1,10 @@
+fastf1
+pandas
+numpy
+matplotlib
+customtkinter
+Pillow
+scipy
+openpyxl
+seaborn
+requests

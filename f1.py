@@ -1,607 +1,2095 @@
 """
-F1 Desktop App (CustomTkinter Version) — FastF1 (Automatisch)
+F1 Desktop Pro - Ultimate Edition
+Professional F1 Data Analysis mit Standings & Championships
 
-Benötigt:
-    pip install fastf1 matplotlib pandas numpy customtkinter
-    
-Optional (für Fahrervergleich):
-    pip install scipy
-    
-Optional (für Excel-Export):
-    pip install openpyxl
-
-Starten:
-    python f1.py
-
-Features:
-- Automatisches Laden aller verfügbaren Jahre und Grand Prix
-- Dashboard mit Session-Übersicht (Beste Zeit, Schnellster Fahrer, etc.)
-- Detaillierte Rundenzeiten-Tabelle mit Position, Team, Sektoren, Geschwindigkeit
-- Erweiterte Telemetrie-Visualisierung:
-  * Geschwindigkeit über Strecke
-  * Gas & Bremse
-  * RPM & Gänge
-- Fahrervergleichsfunktion
-- Moderne UI mit CustomTkinter
-- Loading-States während Datenladen
-- Tooltips für bessere Benutzerführung
-- Export-Funktionen (CSV, Excel, PNG)
-- Verbesserte Tabellen mit Sortierung und Filter
+Neue Features:
+- Race Results & Podium
+- Driver Championship Standings
+- Constructor Championship Standings
+- Team Colors & Styling
+- Points Progression
+- Head-to-Head Stats
+- Visual Podium Display
 """
+
+import sys
+import subprocess
+import os
+
+from f1desktoppro.config import get_app_data_dir, load_config, save_config
+from f1desktoppro.data_service import F1DataService
+from f1desktoppro.licensing import is_valid_key, trial_status
+from f1desktoppro.logging_setup import setup_logging
+
+def check_and_install_packages():
+    required_packages = {
+        'fastf1': 'fastf1',
+        'pandas': 'pandas',
+        'numpy': 'numpy',
+        'matplotlib': 'matplotlib',
+        'customtkinter': 'customtkinter',
+        'PIL': 'Pillow'
+    }
+    
+    optional_packages = {
+        'scipy': 'scipy',
+        'openpyxl': 'openpyxl',
+        'seaborn': 'seaborn',
+        'requests': 'requests'
+    }
+    
+    missing_required = []
+    missing_optional = []
+    
+    for module_name, package_name in required_packages.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing_required.append(package_name)
+    
+    for module_name, package_name in optional_packages.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing_optional.append(package_name)
+    
+    if not missing_required and not missing_optional:
+        return True
+    
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        root = tk.Tk()
+        root.withdraw()
+        
+        message = "Fehlende Bibliotheken:\n\n"
+        if missing_required:
+            message += "ERFORDERLICH:\n" + "\n".join(f"  • {pkg}" for pkg in missing_required) + "\n\n"
+        if missing_optional:
+            message += "OPTIONAL:\n" + "\n".join(f"  • {pkg}" for pkg in missing_optional) + "\n\n"
+        message += "Jetzt installieren?"
+        
+        result = messagebox.askyesno("Installation", message, icon='question')
+        root.destroy()
+        
+        if not result:
+            return False
+        
+    except ImportError:
+        print("\n" + "="*60)
+        print("WARNUNG: Fehlende Bibliotheken!")
+        print("="*60)
+        if missing_required:
+            print("\nERFORDERLICH:")
+            for pkg in missing_required:
+                print(f"  • {pkg}")
+        if missing_optional:
+            print("\nOPTIONAL:")
+            for pkg in missing_optional:
+                print(f"  • {pkg}")
+        print("\n" + "="*60)
+        response = input("\nInstallieren? (j/n): ")
+        if response.lower() not in ['j', 'ja', 'y', 'yes']:
+            return False
+    
+    packages_to_install = missing_required + missing_optional
+    
+    if packages_to_install:
+        print(f"\n📦 Installiere {len(packages_to_install)} Paket(e)...\n")
+        
+        try:
+            for package in packages_to_install:
+                print(f"⏳ {package}...")
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", package],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                print(f"✅ {package}")
+            
+            print("\n" + "="*60)
+            print("✅ Installation abgeschlossen!")
+            print("="*60)
+            print("\n🔄 Neustart...\n")
+            
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+            
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ Fehler: {str(e)}")
+            return False
+    
+    return True
+
+
+def check_dependencies():
+    required_packages = {
+        "fastf1": "fastf1",
+        "pandas": "pandas",
+        "numpy": "numpy",
+        "matplotlib": "matplotlib",
+        "customtkinter": "customtkinter",
+        "PIL": "Pillow",
+    }
+
+    missing_required = []
+    for module_name, package_name in required_packages.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing_required.append(package_name)
+
+    if not missing_required:
+        return True
+
+    message = (
+        "Fehlende Bibliotheken:\n\n"
+        + "\n".join(f"- {pkg}" for pkg in missing_required)
+        + "\n\nBitte installiere die Abhaengigkeiten ueber:\n"
+        + "pip install -r requirements.txt"
+    )
+
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Fehlende Abhaengigkeiten", message)
+        root.destroy()
+    except Exception:
+        print(message)
+    return False
+
+
+def ensure_license(config):
+    if is_valid_key(config.license_key):
+        return True
+
+    trial_ok, remaining = trial_status(config.trial_start)
+    if trial_ok:
+        if not config.trial_start:
+            config.trial_start = datetime.utcnow().isoformat()
+            save_config(config)
+        return True
+
+    try:
+        import tkinter as tk
+        from tkinter import messagebox, simpledialog
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showinfo(
+            "Lizenz erforderlich",
+            "Die Testphase ist abgelaufen. Bitte Lizenzschluessel eingeben.",
+        )
+        key = simpledialog.askstring("Lizenz", "Lizenzschluessel:")
+        root.destroy()
+    except Exception:
+        key = None
+
+    if key and is_valid_key(key):
+        config.license_key = key
+        save_config(config)
+        return True
+
+    return False
+
 
 import fastf1
 import pandas as pd
+import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import ttk as tk_ttk
 
-import os
 import threading
 from datetime import datetime
+from typing import Optional, List, Dict
 
-# --- Cache automatisch erstellen ---
-cache_dir = ".fastf1_cache"
-if not os.path.exists(cache_dir):
-    os.makedirs(cache_dir)
-fastf1.Cache.enable_cache(cache_dir)
+try:
+    import seaborn as sns
+    sns.set_style("darkgrid")
+    HAS_SEABORN = True
+except ImportError:
+    HAS_SEABORN = False
 
-# CustomTkinter Theme konfigurieren
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+# === TEAM COLORS ===
+TEAM_COLORS = {
+    'Red Bull Racing': '#3671C6',
+    'Ferrari': '#E8002D',
+    'Mercedes': '#27F4D2',
+    'McLaren': '#FF8000',
+    'Aston Martin': '#229971',
+    'Alpine': '#FF87BC',
+    'Williams': '#64C4FF',
+    'AlphaTauri': '#5E8FAA',
+    'Alfa Romeo': '#C92D4B',
+    'Haas F1 Team': '#B6BABD',
+    'RB': '#6692FF',
+    'Kick Sauber': '#52E252',
+    'Racing Bulls': '#6692FF'
+}
 
-
-class ToolTip:
-    """Einfaches Tooltip-Widget für CustomTkinter"""
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tipwindow = None
-        self.id = None
-        self.x = self.y = 0
-        self.widget.bind('<Enter>', self.enter)
-        self.widget.bind('<Leave>', self.leave)
-        self.widget.bind('<ButtonPress>', self.leave)
-
-    def enter(self, event=None):
-        self.schedule()
-
-    def leave(self, event=None):
-        self.unschedule()
-        self.hidetip()
-
-    def schedule(self):
-        self.unschedule()
-        self.id = self.widget.after(500, self.showtip)
-
-    def unschedule(self):
-        id = self.id
-        self.id = None
-        if id:
-            self.widget.after_cancel(id)
-
-    def showtip(self, event=None):
-        x, y, cx, cy = self.widget.bbox("insert") if hasattr(self.widget, 'bbox') else (0, 0, 0, 0)
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 20
-        self.tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry("+%d+%d" % (x, y))
-        label = tk.Label(tw, text=self.text, justify='left',
-                        background="#ffffe0", relief='solid', borderwidth=1,
-                        font=("Segoe UI", 9))
-        label.pack(ipadx=1)
-
-    def hidetip(self):
-        tw = self.tipwindow
-        self.tipwindow = None
-        if tw:
-            tw.destroy()
+# === FARB-PALETTE ===
+class ColorPalette:
+    F1_RED = "#e10600"
+    F1_RED_HOVER = "#ff1a1a"
+    
+    BG_DARK = "#0a0a0a"
+    BG_CARD = "#1a1a1a"
+    BG_ELEVATED = "#252525"
+    TEXT_PRIMARY = "#ffffff"
+    TEXT_SECONDARY = "#a0a0a0"
+    BORDER = "#3d3d3d"
+    
+    ACCENT_BLUE = "#00aaff"
+    ACCENT_GREEN = "#00d4aa"
+    ACCENT_ORANGE = "#ffaa00"
+    ACCENT_PURPLE = "#aa00ff"
+    
+    SUCCESS = "#00c853"
+    WARNING = "#ff9800"
+    ERROR = "#f44336"
+    INFO = "#2196f3"
+    
+    GOLD = "#FFD700"
+    SILVER = "#C0C0C0"
+    BRONZE = "#CD7F32"
 
 
-class F1TkApp:
-    def __init__(self, root):
+class AnimatedLabel(ctk.CTkLabel):
+    """Label mit Counter-Animation"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.target_value = 0
+        self.current_value = 0
+        
+    def animate_to(self, value: float, duration: int = 500, format_str: str = "{}"):
+        """Animiert zu einem Zielwert"""
+        self.target_value = value
+        steps = 20
+        step_duration = duration // steps
+        step_value = (value - self.current_value) / steps
+        
+        def update_step(step=0):
+            if step < steps:
+                self.current_value += step_value
+                self.configure(text=format_str.format(int(self.current_value)))
+                self.after(step_duration, lambda: update_step(step + 1))
+            else:
+                self.current_value = value
+                self.configure(text=format_str.format(int(value)))
+        
+        update_step()
+
+
+class StatCard(ctk.CTkFrame):
+    """Moderne Statistik-Karte"""
+    def __init__(self, parent, title: str, icon: str = "📊", **kwargs):
+        super().__init__(parent, fg_color=ColorPalette.BG_CARD, 
+                        corner_radius=12, **kwargs)
+        
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=15, pady=(15, 5))
+        
+        ctk.CTkLabel(header, text=icon, font=ctk.CTkFont(size=24)).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(header, text=title, 
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color=ColorPalette.TEXT_SECONDARY).pack(side="left")
+        
+        self.value_label = AnimatedLabel(self, text="—", 
+                                        font=ctk.CTkFont(size=32, weight="bold"),
+                                        text_color=ColorPalette.TEXT_PRIMARY)
+        self.value_label.pack(pady=(5, 10))
+        
+        self.subtext_label = ctk.CTkLabel(self, text="", 
+                                         font=ctk.CTkFont(size=10),
+                                         text_color=ColorPalette.TEXT_SECONDARY)
+        self.subtext_label.pack(pady=(0, 15))
+    
+    def set_value(self, value: str, subtext: str = "", animate: bool = False):
+        """Setzt den Wert der Karte"""
+        if animate and isinstance(value, (int, float)):
+            self.value_label.animate_to(value)
+        else:
+            self.value_label.configure(text=str(value))
+        self.subtext_label.configure(text=subtext)
+
+
+class LoadingOverlay(ctk.CTkFrame):
+    """Loading Overlay mit Animation"""
+    def __init__(self, parent):
+        super().__init__(parent, fg_color=("gray90", "gray10"))
+        
+        container = ctk.CTkFrame(self, fg_color=ColorPalette.BG_CARD,
+                                corner_radius=20)
+        container.place(relx=0.5, rely=0.5, anchor="center")
+        
+        self.progress = ctk.CTkProgressBar(container, width=300, height=8,
+                                          fg_color=ColorPalette.BORDER,
+                                          progress_color=ColorPalette.F1_RED)
+        self.progress.pack(padx=40, pady=(40, 10))
+        self.progress.set(0)
+        
+        self.status_label = ctk.CTkLabel(container, text="Lädt...",
+                                        font=ctk.CTkFont(size=14, weight="bold"))
+        self.status_label.pack(pady=(10, 40))
+        
+        self.place_forget()
+    
+    def show(self, message: str = "Lädt..."):
+        """Zeigt das Overlay"""
+        self.status_label.configure(text=message)
+        self.progress.set(0)
+        self.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.lift()
+        self.animate_progress()
+    
+    def hide(self):
+        """Versteckt das Overlay"""
+        self.place_forget()
+    
+    def animate_progress(self):
+        """Animiert die Progress Bar"""
+        current = self.progress.get()
+        if current < 0.9:
+            self.progress.set(current + 0.1)
+            self.after(100, self.animate_progress)
+    
+    def set_progress(self, value: float):
+        """Setzt den Fortschritt manuell"""
+        self.progress.set(min(value, 1.0))
+
+
+class PodiumDisplay(ctk.CTkFrame):
+    """Podium-Anzeige für Top 3"""
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, fg_color="transparent", **kwargs)
+        
+        self.podium_frames = {}
+        
+        # Container für Podium
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(expand=True)
+        
+        # 2. Platz (Links)
+        self.podium_frames[2] = self.create_podium_place(container, 2, ColorPalette.SILVER, 150)
+        self.podium_frames[2].pack(side="left", padx=10, pady=30)
+        
+        # 1. Platz (Mitte, höher)
+        self.podium_frames[1] = self.create_podium_place(container, 1, ColorPalette.GOLD, 180)
+        self.podium_frames[1].pack(side="left", padx=10)
+        
+        # 3. Platz (Rechts)
+        self.podium_frames[3] = self.create_podium_place(container, 3, ColorPalette.BRONZE, 130)
+        self.podium_frames[3].pack(side="left", padx=10, pady=50)
+    
+    def create_podium_place(self, parent, position: int, color: str, height: int):
+        """Erstellt einen Podiumsplatz"""
+        frame = ctk.CTkFrame(parent, fg_color=ColorPalette.BG_CARD,
+                           corner_radius=15, width=200, height=height + 100)
+        frame.pack_propagate(False)
+        
+        # Position Badge
+        badge = ctk.CTkFrame(frame, fg_color=color, corner_radius=25,
+                           width=50, height=50)
+        badge.pack(pady=(15, 10))
+        badge.pack_propagate(False)
+        
+        badge_text_color = "#000000"  # Schwarzer Text für alle Badges
+        ctk.CTkLabel(badge, text=str(position),
+                    font=ctk.CTkFont(size=28, weight="bold"),
+                    text_color=badge_text_color).pack(expand=True)
+        
+        # Driver Name
+        frame.driver_label = ctk.CTkLabel(frame, text="—",
+                                         font=ctk.CTkFont(size=16, weight="bold"),
+                                         text_color=ColorPalette.TEXT_PRIMARY)
+        frame.driver_label.pack(pady=5)
+        
+        # Team
+        frame.team_label = ctk.CTkLabel(frame, text="",
+                                       font=ctk.CTkFont(size=11),
+                                       text_color=ColorPalette.TEXT_SECONDARY)
+        frame.team_label.pack()
+        
+        # Time/Gap
+        frame.time_label = ctk.CTkLabel(frame, text="",
+                                       font=ctk.CTkFont(size=13),
+                                       text_color=ColorPalette.TEXT_PRIMARY)
+        frame.time_label.pack(pady=5)
+        
+        # Points
+        frame.points_label = ctk.CTkLabel(frame, text="",
+                                         font=ctk.CTkFont(size=12, weight="bold"),
+                                         text_color=color)
+        frame.points_label.pack(pady=5)
+        
+        # Podium Base
+        base = ctk.CTkFrame(frame, fg_color=color, corner_radius=0,
+                          height=height)
+        base.pack(side="bottom", fill="x")
+        base.pack_propagate(False)
+        
+        base_text_color = "#000000"  # Schwarzer Text für alle Sockel
+        ctk.CTkLabel(base, text=f"P{position}",
+                    font=ctk.CTkFont(size=32, weight="bold"),
+                    text_color=base_text_color).pack(expand=True)
+        
+        return frame
+    
+    def set_position(self, position: int, driver: str, team: str, time: str, points: int):
+        """Setzt Daten für eine Position"""
+        if position in self.podium_frames:
+            frame = self.podium_frames[position]
+            
+            # Truncate long names
+            display_driver = driver[:8] if len(driver) > 8 else driver
+            display_team = team[:15] + "..." if len(team) > 15 else team
+            
+            frame.driver_label.configure(text=display_driver)
+            frame.team_label.configure(text=display_team)
+            frame.time_label.configure(text=time)
+            frame.points_label.configure(text=f"{points} Punkte")
+
+    def clear(self):
+        """Setzt das Podium zurck"""
+        for frame in self.podium_frames.values():
+            frame.driver_label.configure(text="-")
+            frame.team_label.configure(text="")
+            frame.time_label.configure(text="")
+            frame.points_label.configure(text="")
+
+
+class F1DesktopPro:
+    def __init__(self, root, config=None, logger=None):
         self.root = root
-        self.root.title("🏎️ F1 Desktop – FastF1 (Automatisch)")
-        self.root.geometry("1400x800")
+        self.config = config
+        self.logger = logger
+        self.data_service = F1DataService()
+        self.root.title("🏎️ F1 Desktop Pro - Ultimate Edition")
+        self.root.geometry("1600x900")
+        self.root.minsize(1200, 700)
+        
+        # State
         self.session = None
         self.events = None
         self.current_lap = None
         self.sort_column = None
         self.sort_reverse = False
         self.filter_text = ""
-
-        # F1 Rot als Akzentfarbe
-        self.accent_color = "#e10600"
+        self.theme = "dark"
         
+        # Colors
+        self.colors = ColorPalette()
+        
+        # UI
         self.build_ui()
+
+        # Loading Overlay
+        self.loading = LoadingOverlay(self.root)
+
         self.load_years()
 
-    # -----------------------------------------------------
     def build_ui(self):
-        # Hauptcontainer
-        main_container = ctk.CTkFrame(self.root, fg_color=("gray90", "gray13"))
-        main_container.pack(fill="both", expand=True, padx=10, pady=10)
+        """Erstellt die Benutzeroberfläche"""
+        # === SIDEBAR ===
+        self.sidebar = ctk.CTkFrame(self.root, width=280, 
+                                   fg_color=ColorPalette.BG_CARD,
+                                   corner_radius=0)
+        self.sidebar.pack(side="left", fill="y", padx=0, pady=0)
+        self.sidebar.pack_propagate(False)
+        
+        self.build_sidebar()
+        
+        # === MAIN CONTENT ===
+        self.main_container = ctk.CTkFrame(self.root, 
+                                          fg_color=ColorPalette.BG_DARK)
+        self.main_container.pack(side="right", fill="both", expand=True)
+        
+        self.build_main_content()
 
-        # Header Frame
-        header = ctk.CTkFrame(main_container, fg_color=("gray85", "gray17"))
-        header.pack(fill="x", padx=10, pady=10)
-
-        title_label = ctk.CTkLabel(header, text="🏎️ F1 Datenanalyse", 
-                                   font=ctk.CTkFont(size=20, weight="bold"))
-        title_label.pack(anchor="w", padx=15, pady=(10, 5))
-
-        # Control Panel
-        control_panel = ctk.CTkFrame(header, fg_color="transparent")
-        control_panel.pack(fill="x", padx=15, pady=10)
-
-        # Jahr Dropdown
-        year_frame = ctk.CTkFrame(control_panel, fg_color="transparent")
-        year_frame.pack(side="left", padx=(0, 15))
-        ctk.CTkLabel(year_frame, text="Jahr:", font=ctk.CTkFont(size=12)).pack(anchor="w", pady=(0, 5))
+    def build_sidebar(self):
+        """Erstellt die Sidebar"""
+        header = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=20)
+        
+        ctk.CTkLabel(header, text="🏎️", font=ctk.CTkFont(size=32)).pack()
+        ctk.CTkLabel(header, text="F1 Desktop Pro",
+                    font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(5, 0))
+        ctk.CTkLabel(header, text="Ultimate Edition",
+                    font=ctk.CTkFont(size=10),
+                    text_color=ColorPalette.TEXT_SECONDARY).pack()
+        
+        ctk.CTkFrame(self.sidebar, height=2, 
+                    fg_color=ColorPalette.BORDER).pack(fill="x", padx=20, pady=10)
+        
+        controls = ctk.CTkScrollableFrame(self.sidebar, 
+                                         fg_color="transparent")
+        controls.pack(fill="both", expand=True, padx=15, pady=10)
+        
+        # Jahr
+        self.create_control_section(controls, "Jahr", "📅")
         self.year_var = ctk.StringVar()
-        self.year_cb = ctk.CTkComboBox(year_frame, variable=self.year_var, 
-                                      width=120, state="readonly",
-                                      command=self.on_year_selected)
-        self.year_cb.pack()
-        ToolTip(self.year_cb, "Wählen Sie das Jahr des Grand Prix")
-
-        # GP Dropdown
-        gp_frame = ctk.CTkFrame(control_panel, fg_color="transparent")
-        gp_frame.pack(side="left", padx=(0, 15), fill="x", expand=True)
-        ctk.CTkLabel(gp_frame, text="Grand Prix:", font=ctk.CTkFont(size=12)).pack(anchor="w", pady=(0, 5))
+        self.year_cb = ctk.CTkComboBox(controls, variable=self.year_var,
+                                       width=250, state="readonly",
+                                       command=self.on_year_selected,
+                                       fg_color=ColorPalette.BG_ELEVATED,
+                                       button_color=ColorPalette.F1_RED,
+                                       button_hover_color=ColorPalette.F1_RED_HOVER)
+        self.year_cb.pack(pady=(5, 15))
+        
+        # Grand Prix
+        self.create_control_section(controls, "Grand Prix", "🏁")
         self.gp_var = ctk.StringVar()
-        self.gp_cb = ctk.CTkComboBox(gp_frame, variable=self.gp_var, 
-                                    width=300, state="readonly")
-        self.gp_cb.pack(fill="x")
-        ToolTip(self.gp_cb, "Wählen Sie den Grand Prix")
-
-        # Session Dropdown
-        session_frame = ctk.CTkFrame(control_panel, fg_color="transparent")
-        session_frame.pack(side="left", padx=(0, 15))
-        ctk.CTkLabel(session_frame, text="Session:", font=ctk.CTkFont(size=12)).pack(anchor="w", pady=(0, 5))
+        self.gp_cb = ctk.CTkComboBox(controls, variable=self.gp_var,
+                                     width=250, state="readonly",
+                                     fg_color=ColorPalette.BG_ELEVATED,
+                                     button_color=ColorPalette.F1_RED,
+                                     button_hover_color=ColorPalette.F1_RED_HOVER)
+        self.gp_cb.pack(pady=(5, 15))
+        
+        # Session
+        self.create_control_section(controls, "Session", "⏱️")
         self.ses_var = ctk.StringVar()
-        self.ses_cb = ctk.CTkComboBox(session_frame, variable=self.ses_var,
-                                     values=["FP1", "FP2", "FP3", "Q", "R", "Q1", "Q2", "Q3"],
-                                     width=100, state="readonly")
-        self.ses_cb.pack()
-        ToolTip(self.ses_cb, "Wählen Sie die Session (FP=Free Practice, Q=Qualifying, R=Race)")
-
+        self.ses_cb = ctk.CTkComboBox(controls, variable=self.ses_var,
+                                     values=["FP1", "FP2", "FP3", "Q", "R"],
+                                     width=250, state="readonly",
+                                     fg_color=ColorPalette.BG_ELEVATED,
+                                     button_color=ColorPalette.F1_RED,
+                                     button_hover_color=ColorPalette.F1_RED_HOVER)
+        self.ses_cb.pack(pady=(5, 15))
+        if self.config and self.config.last_session in ["FP1", "FP2", "FP3", "Q", "R"]:
+            self.ses_var.set(self.config.last_session)
+        
         # Load Button
-        button_frame = ctk.CTkFrame(control_panel, fg_color="transparent")
-        button_frame.pack(side="left", padx=(15, 0))
-        ctk.CTkLabel(button_frame, text="", font=ctk.CTkFont(size=12)).pack(anchor="w", pady=(0, 5))
-        self.load_btn = ctk.CTkButton(button_frame, text="📥 Laden", 
-                                      command=self.load_session,
-                                      fg_color=self.accent_color,
-                                      hover_color="#ff1a1a",
-                                      width=120, height=32)
-        self.load_btn.pack()
-        ToolTip(self.load_btn, "Lädt die ausgewählte Session")
-
-        # Status Label und Progress Bar
-        status_frame = ctk.CTkFrame(header, fg_color="transparent")
-        status_frame.pack(fill="x", padx=15, pady=(0, 10))
+        self.load_btn = ctk.CTkButton(controls, text="🚀 Session laden",
+                                     command=self.load_session,
+                                     fg_color=ColorPalette.F1_RED,
+                                     hover_color=ColorPalette.F1_RED_HOVER,
+                                     height=45, corner_radius=10,
+                                     font=ctk.CTkFont(size=14, weight="bold"))
+        self.load_btn.pack(pady=20, fill="x")
         
-        self.status_label = ctk.CTkLabel(status_frame, text="Bereit", 
-                                        font=ctk.CTkFont(size=11),
-                                        text_color=("gray50", "gray50"))
-        self.status_label.pack(side="left")
+        ctk.CTkFrame(controls, height=2,
+                    fg_color=ColorPalette.BORDER).pack(fill="x", pady=15)
         
-        self.progress_bar = ctk.CTkProgressBar(status_frame, width=200, height=10)
-        self.progress_bar.pack(side="right", padx=(10, 0))
-        self.progress_bar.set(0)
-        self.progress_bar.pack_forget()  # Versteckt initial
-
-        # Export Button
-        export_btn = ctk.CTkButton(status_frame, text="💾 Export", 
-                                   command=self.export_data,
-                                   width=100, height=28,
-                                   fg_color=("gray70", "gray30"))
-        export_btn.pack(side="right", padx=(10, 0))
-        ToolTip(export_btn, "Exportiert Tabellendaten als CSV/Excel")
-
-        # --- Dashboard Bereich (Session Übersicht) ---
-        dashboard_frame = ctk.CTkFrame(main_container, fg_color=("gray85", "gray17"))
-        dashboard_frame.pack(fill="x", padx=10, pady=(0, 10))
-
-        dashboard_inner = ctk.CTkFrame(dashboard_frame, fg_color="transparent")
-        dashboard_inner.pack(fill="x", padx=15, pady=10)
-
-        ctk.CTkLabel(dashboard_inner, text="📈 Session-Übersicht", 
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", pady=(0, 10))
-
-        stats_container = ctk.CTkFrame(dashboard_inner, fg_color="transparent")
-        stats_container.pack(fill="x")
-
-        # Statistik Labels
-        self.stat_labels = {}
-        stat_items = [
-            ("Beste Zeit", "best_time"),
-            ("Schnellster Fahrer", "fastest_driver"),
-            ("Anzahl Runden", "total_laps"),
-            ("Anzahl Fahrer", "total_drivers"),
-            ("Session-Typ", "session_type")
+        # Quick Actions
+        ctk.CTkLabel(controls, text="Quick Actions",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color=ColorPalette.TEXT_SECONDARY).pack(anchor="w", pady=(0, 10))
+        
+        actions = [
+            ("🏆 Championship", self.show_championship, ColorPalette.GOLD, "#000000"),
+            ("💾 Export Daten", self.export_data, ColorPalette.ACCENT_BLUE, ColorPalette.TEXT_PRIMARY),
+            ("📊 Export Charts", self.export_plot, ColorPalette.ACCENT_GREEN, ColorPalette.TEXT_PRIMARY),
+            ("🔄 Reset View", self.reset_view, ColorPalette.ACCENT_ORANGE, ColorPalette.TEXT_PRIMARY)
         ]
-
-        for i, (label, key) in enumerate(stat_items):
-            frame = ctk.CTkFrame(stats_container, fg_color="transparent")
-            frame.pack(side="left", padx=20, fill="x", expand=True)
-            ctk.CTkLabel(frame, text=label + ":", 
-                       font=ctk.CTkFont(size=10),
-                       text_color=("gray50", "gray50")).pack(anchor="w")
-            value_label = ctk.CTkLabel(frame, text="—", 
-                                     font=ctk.CTkFont(size=12, weight="bold"))
-            value_label.pack(anchor="w")
-            self.stat_labels[key] = value_label
-
-        # --- Main Content Area ---
-        main = ctk.CTkFrame(main_container, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        # --- Links: Runden Tabelle ---
-        left_container = ctk.CTkFrame(main, fg_color="transparent")
-        left_container.pack(side="left", fill="both", expand=True, padx=(0, 5))
-
-        left_header = ctk.CTkFrame(left_container, fg_color=("gray85", "gray17"))
-        left_header.pack(fill="x", pady=(0, 10))
-
-        header_inner = ctk.CTkFrame(left_header, fg_color="transparent")
-        header_inner.pack(fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(header_inner, text="⏱️ Rundenzeiten", 
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(side="left")
-
-        # Filter Input
-        filter_frame = ctk.CTkFrame(header_inner, fg_color="transparent")
-        filter_frame.pack(side="right")
-        ctk.CTkLabel(filter_frame, text="Filter:", font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 5))
-        self.filter_entry = ctk.CTkEntry(filter_frame, width=150, height=28,
-                                        placeholder_text="Fahrer, Team...")
-        self.filter_entry.pack(side="left")
-        self.filter_entry.bind("<KeyRelease>", self.on_filter_changed)
-        ToolTip(self.filter_entry, "Filtern Sie die Tabelle nach Fahrer oder Team")
-
-        left = ctk.CTkFrame(left_container, fg_color=("gray90", "gray10"))
-        left.pack(fill="both", expand=True)
-
-        # Tabelle mit Scrollbar
-        table_frame = ctk.CTkFrame(left, fg_color="transparent")
-        table_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # Verwende tkinter Treeview für bessere Funktionalität
-        from tkinter import ttk as tk_ttk
         
-        scrollbar_y = tk.Scrollbar(table_frame, orient="vertical", 
-                                   bg="#2b2b2b", troughcolor="#1a1a1a",
-                                   activebackground="#3d3d3d")
-        scrollbar_x = tk.Scrollbar(table_frame, orient="horizontal",
-                                   bg="#2b2b2b", troughcolor="#1a1a1a",
-                                   activebackground="#3d3d3d")
+        for text, command, color, text_color in actions:
+            btn = ctk.CTkButton(controls, text=text, command=command,
+                               fg_color=color, hover_color=color,
+                               text_color=text_color,
+                               height=35, corner_radius=8,
+                               font=ctk.CTkFont(size=12, weight="bold"))
+            btn.pack(pady=5, fill="x")
+        
+        footer = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        footer.pack(side="bottom", fill="x", padx=20, pady=20)
+        
+        ctk.CTkLabel(footer, text="FastF1 Data Analysis",
+                    font=ctk.CTkFont(size=9),
+                    text_color=ColorPalette.TEXT_SECONDARY).pack()
 
+    def create_control_section(self, parent, title: str, icon: str):
+        """Erstellt einen Control-Section Header"""
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=(5, 0))
+        
+        ctk.CTkLabel(frame, text=icon, 
+                    font=ctk.CTkFont(size=16)).pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(frame, text=title,
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color=ColorPalette.TEXT_SECONDARY).pack(side="left")
+
+    def build_main_content(self):
+        """Erstellt den Hauptinhalt"""
+        # Header Bar
+        header = ctk.CTkFrame(self.main_container, 
+                             fg_color=ColorPalette.BG_CARD,
+                             height=70, corner_radius=0)
+        header.pack(fill="x", padx=0, pady=0)
+        header.pack_propagate(False)
+        
+        title_frame = ctk.CTkFrame(header, fg_color="transparent")
+        title_frame.pack(side="left", padx=20)
+        
+        self.session_title = ctk.CTkLabel(title_frame, 
+                                         text="Keine Session geladen",
+                                         font=ctk.CTkFont(size=20, weight="bold"))
+        self.session_title.pack(anchor="w")
+        
+        self.session_subtitle = ctk.CTkLabel(title_frame,
+                                            text="Wähle eine Session aus der Sidebar",
+                                            font=ctk.CTkFont(size=11),
+                                            text_color=ColorPalette.TEXT_SECONDARY)
+        self.session_subtitle.pack(anchor="w")
+        
+        # Search Bar
+        search_frame = ctk.CTkFrame(header, fg_color="transparent")
+        search_frame.pack(side="right", padx=20)
+        
+        ctk.CTkLabel(search_frame, text="🔍",
+                    font=ctk.CTkFont(size=16)).pack(side="left", padx=(0, 5))
+        
+        self.search_entry = ctk.CTkEntry(search_frame, 
+                                        placeholder_text="Fahrer, Team suchen...",
+                                        width=250, height=35,
+                                        fg_color=ColorPalette.BG_ELEVATED,
+                                        border_width=0)
+        self.search_entry.pack(side="left")
+        self.search_entry.bind("<KeyRelease>", self.on_search_changed)
+        
+        # Content Area
+        content = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=15, pady=15)
+        
+        # Dashboard
+        self.build_dashboard(content)
+        
+        # Tabs
+        self.build_tabs(content)
+
+    def build_dashboard(self, parent):
+        """Erstellt das Dashboard mit Stat-Cards"""
+        dashboard = ctk.CTkFrame(parent, fg_color="transparent")
+        dashboard.pack(fill="x", pady=(0, 15))
+        
+        stats_grid = ctk.CTkFrame(dashboard, fg_color="transparent")
+        stats_grid.pack(fill="x")
+        
+        for i in range(6):
+            stats_grid.grid_columnconfigure(i, weight=1)
+        
+        self.stat_cards = {}
+        
+        cards_config = [
+            ("best_time", "Beste Zeit", "⏱️"),
+            ("fastest_driver", "Schnellster", "👤"),
+            ("total_laps", "Runden", "🔄"),
+            ("total_drivers", "Fahrer", "👥"),
+            ("avg_speed", "Ø Tempo", "🏎️"),
+            ("best_sector", "Bester Sektor", "📊")
+        ]
+        
+        for i, (key, title, icon) in enumerate(cards_config):
+            card = StatCard(stats_grid, title=title, icon=icon, width=200)
+            card.grid(row=0, column=i, padx=5, pady=5, sticky="ew")
+            self.stat_cards[key] = card
+
+    def build_tabs(self, parent):
+        """Erstellt die Tab-Ansicht"""
+        self.tab_view = ctk.CTkTabview(parent, 
+                                      fg_color=ColorPalette.BG_CARD,
+                                      segmented_button_fg_color=ColorPalette.BG_ELEVATED,
+                                      segmented_button_selected_color=ColorPalette.F1_RED,
+                                      segmented_button_selected_hover_color=ColorPalette.F1_RED_HOVER)
+        self.tab_view.pack(fill="both", expand=True)
+        
+        # Tabs
+        self.tab_view.add("📊 Übersicht")
+        self.tab_view.add("🏆 Standings")
+        self.tab_view.add("📈 Telemetrie")
+        self.tab_view.add("⚖️ Vergleich")
+        self.tab_view.add("🎯 Analyse")
+        
+        # Tab Contents
+        self.build_overview_tab()
+        self.build_standings_tab()
+        self.build_telemetry_tab()
+        self.build_compare_tab()
+        self.build_analysis_tab()
+
+    def build_standings_tab(self):
+        """Erstellt den Standings-Tab"""
+        tab = self.tab_view.tab("🏆 Standings")
+        
+        # Sub-tabs
+        standings_tabs = ctk.CTkTabview(tab,
+                                       fg_color="transparent",
+                                       segmented_button_fg_color=ColorPalette.BG_ELEVATED,
+                                       segmented_button_selected_color=ColorPalette.ACCENT_BLUE)
+        standings_tabs.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        standings_tabs.add("🏁 Race Results")
+        standings_tabs.add("👤 Driver Championship")
+        standings_tabs.add("🏢 Constructor Championship")
+        
+        # Race Results Tab
+        self.build_race_results_tab(standings_tabs.tab("🏁 Race Results"))
+        
+        # Driver Championship Tab
+        self.build_driver_championship_tab(standings_tabs.tab("👤 Driver Championship"))
+        
+        # Constructor Championship Tab
+        self.build_constructor_championship_tab(standings_tabs.tab("🏢 Constructor Championship"))
+
+    def build_race_results_tab(self, parent):
+        """Erstellt Race Results Tab"""
+        # Info message if not a race
+        self.race_info_label = ctk.CTkLabel(parent, 
+                                           text="Lade eine Race-Session (R), um Ergebnisse zu sehen",
+                                           font=ctk.CTkFont(size=14),
+                                           text_color=ColorPalette.TEXT_SECONDARY)
+        self.race_info_label.pack(pady=20)
+        
+        # Podium Display
+        podium_container = ctk.CTkFrame(parent, fg_color=ColorPalette.BG_ELEVATED,
+                                       corner_radius=15, height=300)
+        podium_container.pack(fill="x", padx=10, pady=(10, 5))
+        podium_container.pack_propagate(False)
+        
+        ctk.CTkLabel(podium_container, text="🏆 PODIUM",
+                    font=ctk.CTkFont(size=20, weight="bold")).pack(pady=15)
+        
+        self.podium = PodiumDisplay(podium_container)
+        self.podium.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        # Results Table
+        table_container = ctk.CTkFrame(parent, fg_color=ColorPalette.BG_ELEVATED,
+                                      corner_radius=10)
+        table_container.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+        
+        table_header = ctk.CTkFrame(table_container, fg_color="transparent")
+        table_header.pack(fill="x", padx=15, pady=15)
+        
+        ctk.CTkLabel(table_header, text="📋 Vollständiges Ergebnis",
+                    font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
+        
+        # Table
+        table_frame = ctk.CTkFrame(table_container, fg_color="transparent")
+        table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        scrollbar_y = tk.Scrollbar(table_frame, orient="vertical")
+        
+        style = tk_ttk.Style()
+        style.theme_use("clam")
+        style.configure("Results.Treeview",
+                       background=ColorPalette.BG_CARD,
+                       foreground=ColorPalette.TEXT_PRIMARY,
+                       fieldbackground=ColorPalette.BG_CARD,
+                       borderwidth=0,
+                       rowheight=35)
+        style.configure("Results.Treeview.Heading",
+                       background=ColorPalette.BG_ELEVATED,
+                       foreground=ColorPalette.TEXT_PRIMARY,
+                       borderwidth=1)
+        style.map("Results.Treeview",
+                 background=[("selected", ColorPalette.F1_RED)])
+        
+        columns = ("Pos", "Fahrer", "Team", "Zeit", "Punkte", "Status")
+        self.results_table = tk_ttk.Treeview(
+            table_frame,
+            columns=columns,
+            show="headings",
+            yscrollcommand=scrollbar_y.set,
+            style="Results.Treeview"
+        )
+        
+        scrollbar_y.config(command=self.results_table.yview)
+        
+        widths = {"Pos": 60, "Fahrer": 150, "Team": 200, "Zeit": 120, 
+                 "Punkte": 100, "Status": 150}
+        
+        for col in columns:
+            self.results_table.heading(col, text=col)
+            self.results_table.column(col, width=widths.get(col, 100), anchor="center")
+        
+        self.results_table.pack(side="left", fill="both", expand=True)
+        scrollbar_y.pack(side="right", fill="y")
+
+    def build_driver_championship_tab(self, parent):
+        """Erstellt Driver Championship Tab"""
+        # Split view
+        left = ctk.CTkFrame(parent, fg_color="transparent")
+        left.pack(side="left", fill="both", expand=True, padx=(10, 5), pady=10)
+        
+        right = ctk.CTkFrame(parent, fg_color="transparent")
+        right.pack(side="right", fill="both", expand=True, padx=(5, 10), pady=10)
+        
+        # Standings Table
+        table_container = ctk.CTkFrame(left, fg_color=ColorPalette.BG_ELEVATED,
+                                      corner_radius=10)
+        table_container.pack(fill="both", expand=True)
+        
+        ctk.CTkLabel(table_container, text="👤 Fahrer-WM",
+                    font=ctk.CTkFont(size=16, weight="bold")).pack(pady=15)
+        
+        table_frame = ctk.CTkFrame(table_container, fg_color="transparent")
+        table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        scrollbar_y = tk.Scrollbar(table_frame, orient="vertical")
+        
+        columns = ("Pos", "Fahrer", "Team", "Punkte", "Siege")
+        self.driver_standings_table = tk_ttk.Treeview(
+            table_frame,
+            columns=columns,
+            show="headings",
+            yscrollcommand=scrollbar_y.set,
+            style="Results.Treeview"
+        )
+        
+        scrollbar_y.config(command=self.driver_standings_table.yview)
+        
+        widths = {"Pos": 60, "Fahrer": 150, "Team": 150, "Punkte": 100, "Siege": 80}
+        
+        for col in columns:
+            self.driver_standings_table.heading(col, text=col)
+            self.driver_standings_table.column(col, width=widths.get(col, 100), 
+                                             anchor="center")
+        
+        self.driver_standings_table.pack(side="left", fill="both", expand=True)
+        scrollbar_y.pack(side="right", fill="y")
+        
+        # Points Chart
+        chart_container = ctk.CTkFrame(right, fg_color=ColorPalette.BG_ELEVATED,
+                                      corner_radius=10)
+        chart_container.pack(fill="both", expand=True)
+        
+        ctk.CTkLabel(chart_container, text="📈 Punkte-Entwicklung",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=10)
+        
+        self.driver_points_fig = Figure(figsize=(6, 5), facecolor=ColorPalette.BG_CARD)
+        self.driver_points_ax = self.driver_points_fig.add_subplot(111, 
+                                                                   facecolor=ColorPalette.BG_ELEVATED)
+        self.driver_points_canvas = FigureCanvasTkAgg(self.driver_points_fig, 
+                                                     master=chart_container)
+        self.driver_points_canvas.get_tk_widget().pack(fill="both", expand=True, 
+                                                      padx=10, pady=10)
+        self.style_plot(self.driver_points_ax)
+
+    def build_constructor_championship_tab(self, parent):
+        """Erstellt Constructor Championship Tab"""
+        # Split view
+        left = ctk.CTkFrame(parent, fg_color="transparent")
+        left.pack(side="left", fill="both", expand=True, padx=(10, 5), pady=10)
+        
+        right = ctk.CTkFrame(parent, fg_color="transparent")
+        right.pack(side="right", fill="both", expand=True, padx=(5, 10), pady=10)
+        
+        # Standings Table
+        table_container = ctk.CTkFrame(left, fg_color=ColorPalette.BG_ELEVATED,
+                                      corner_radius=10)
+        table_container.pack(fill="both", expand=True)
+        
+        ctk.CTkLabel(table_container, text="🏢 Konstrukteurs-WM",
+                    font=ctk.CTkFont(size=16, weight="bold")).pack(pady=15)
+        
+        table_frame = ctk.CTkFrame(table_container, fg_color="transparent")
+        table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        scrollbar_y = tk.Scrollbar(table_frame, orient="vertical")
+        
+        columns = ("Pos", "Team", "Punkte", "Siege")
+        self.constructor_standings_table = tk_ttk.Treeview(
+            table_frame,
+            columns=columns,
+            show="headings",
+            yscrollcommand=scrollbar_y.set,
+            style="Results.Treeview"
+        )
+        
+        scrollbar_y.config(command=self.constructor_standings_table.yview)
+        
+        widths = {"Pos": 80, "Team": 250, "Punkte": 120, "Siege": 100}
+        
+        for col in columns:
+            self.constructor_standings_table.heading(col, text=col)
+            self.constructor_standings_table.column(col, width=widths.get(col, 100), 
+                                                  anchor="center")
+        
+        self.constructor_standings_table.pack(side="left", fill="both", expand=True)
+        scrollbar_y.pack(side="right", fill="y")
+        
+        # Points Chart
+        chart_container = ctk.CTkFrame(right, fg_color=ColorPalette.BG_ELEVATED,
+                                      corner_radius=10)
+        chart_container.pack(fill="both", expand=True)
+        
+        ctk.CTkLabel(chart_container, text="📊 Team-Vergleich",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=10)
+        
+        self.constructor_points_fig = Figure(figsize=(6, 5), 
+                                            facecolor=ColorPalette.BG_CARD)
+        self.constructor_points_ax = self.constructor_points_fig.add_subplot(111,
+                                                                             facecolor=ColorPalette.BG_ELEVATED)
+        self.constructor_points_canvas = FigureCanvasTkAgg(self.constructor_points_fig,
+                                                          master=chart_container)
+        self.constructor_points_canvas.get_tk_widget().pack(fill="both", expand=True,
+                                                           padx=10, pady=10)
+        self.style_plot(self.constructor_points_ax)
+
+    def build_overview_tab(self):
+        """Erstellt den Übersichts-Tab"""
+        tab = self.tab_view.tab("📊 Übersicht")
+        
+        table_container = ctk.CTkFrame(tab, fg_color=ColorPalette.BG_ELEVATED,
+                                      corner_radius=10)
+        table_container.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        table_header = ctk.CTkFrame(table_container, fg_color="transparent")
+        table_header.pack(fill="x", padx=15, pady=15)
+        
+        ctk.CTkLabel(table_header, text="🏁 Rundenzeiten",
+                    font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
+        
+        table_frame = ctk.CTkFrame(table_container, fg_color="transparent")
+        table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        scrollbar_y = tk.Scrollbar(table_frame, orient="vertical")
+        scrollbar_x = tk.Scrollbar(table_frame, orient="horizontal")
+        
+        style = tk_ttk.Style()
+        style.theme_use("clam")
+        style.configure("Custom.Treeview",
+                       background=ColorPalette.BG_CARD,
+                       foreground=ColorPalette.TEXT_PRIMARY,
+                       fieldbackground=ColorPalette.BG_CARD,
+                       borderwidth=0,
+                       rowheight=30)
+        style.configure("Custom.Treeview.Heading",
+                       background=ColorPalette.BG_ELEVATED,
+                       foreground=ColorPalette.TEXT_PRIMARY,
+                       borderwidth=1,
+                       relief="flat")
+        style.map("Custom.Treeview",
+                 background=[("selected", ColorPalette.F1_RED)],
+                 foreground=[("selected", ColorPalette.TEXT_PRIMARY)])
+        
+        columns = ("Pos", "Fahrer", "Team", "Runde", "Zeit", "S1", "S2", "S3", "Tempo", "★")
         self.lap_table = tk_ttk.Treeview(
             table_frame,
-            columns=("Pos", "Fahrer", "Team", "Runde", "Rundenzeit", "S1", "S2", "S3", "Ø Geschw.", "Beste"),
+            columns=columns,
             show="headings",
-            height=20,
             yscrollcommand=scrollbar_y.set,
             xscrollcommand=scrollbar_x.set,
             style="Custom.Treeview"
         )
-
-        # Style für Treeview - Dark Theme Farben
-        style = tk_ttk.Style()
-        style.theme_use("clam")
-        # Dark Theme Farben
-        style.configure("Custom.Treeview",
-                       background="#2b2b2b",  # Dunkler Hintergrund
-                       foreground="#ffffff",  # Weißer Text
-                       fieldbackground="#2b2b2b",
-                       borderwidth=0,
-                       rowheight=25)
-        style.configure("Custom.Treeview.Heading",
-                       background="#3d3d3d",  # Etwas hellerer Hintergrund für Header
-                       foreground="#ffffff",  # Weißer Text
-                       borderwidth=1,
-                       relief="flat")
-        style.map("Custom.Treeview",
-                 background=[("selected", self.accent_color)],
-                 foreground=[("selected", "#ffffff")])
-
+        
         scrollbar_y.config(command=self.lap_table.yview)
         scrollbar_x.config(command=self.lap_table.xview)
-
-        # Spalten konfigurieren
-        col_widths = {
-            "Pos": 50, "Fahrer": 100, "Team": 100, "Runde": 60,
-            "Rundenzeit": 100, "S1": 80, "S2": 80, "S3": 80,
-            "Ø Geschw.": 90, "Beste": 60
-        }
-        columns = ("Pos", "Fahrer", "Team", "Runde", "Rundenzeit", "S1", "S2", "S3", "Ø Geschw.", "Beste")
+        
+        widths = {"Pos": 60, "Fahrer": 120, "Team": 150, "Runde": 80,
+                 "Zeit": 110, "S1": 90, "S2": 90, "S3": 90, "Tempo": 100, "★": 50}
+        
         for col in columns:
-            self.lap_table.heading(col, text=col, command=lambda c=col: self.sort_table(c))
-            self.lap_table.column(col, width=col_widths.get(col, 100), anchor="center")
-            ToolTip(self.lap_table, f"Klicken Sie auf '{col}' zum Sortieren")
-
+            self.lap_table.heading(col, text=col, 
+                                  command=lambda c=col: self.sort_table(c))
+            self.lap_table.column(col, width=widths.get(col, 100), anchor="center")
+        
         self.lap_table.grid(row=0, column=0, sticky="nsew")
         scrollbar_y.grid(row=0, column=1, sticky="ns")
         scrollbar_x.grid(row=1, column=0, sticky="ew")
+        
         table_frame.grid_rowconfigure(0, weight=1)
         table_frame.grid_columnconfigure(0, weight=1)
-
+        
         self.lap_table.bind("<<TreeviewSelect>>", self.on_lap_selected)
 
-        # --- Rechts: Telemetrie Plot ---
-        right_container = ctk.CTkFrame(main, fg_color="transparent")
-        right_container.pack(side="right", fill="both", expand=True, padx=(5, 0))
-
-        right_header = ctk.CTkFrame(right_container, fg_color=("gray85", "gray17"))
-        right_header.pack(fill="x", pady=(0, 10))
-
-        header_inner_right = ctk.CTkFrame(right_header, fg_color="transparent")
-        header_inner_right.pack(fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(header_inner_right, text="📊 Telemetrie", 
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(side="left")
-
-        # Export Plot Button
-        export_plot_btn = ctk.CTkButton(header_inner_right, text="💾 Plot exportieren",
-                                        command=self.export_plot,
-                                        width=140, height=28,
-                                        fg_color=("gray70", "gray30"))
-        export_plot_btn.pack(side="right")
-        ToolTip(export_plot_btn, "Exportiert die aktuelle Grafik als PNG")
-
-        right = ctk.CTkFrame(right_container, fg_color=("gray90", "gray10"))
-        right.pack(fill="both", expand=True)
-
-        # Plot Frame mit Tabs
-        plot_tabview = ctk.CTkTabview(right)
-        plot_tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # Bestimme Plot-Farben basierend auf Theme
-        self.plot_bg_color = "#1a1a1a"  # Dark theme default
-        self.plot_text_color = "#ffffff"
-        self.plot_border_color = "#4d4d4d"
+    def build_telemetry_tab(self):
+        """Erstellt den Telemetrie-Tab"""
+        tab = self.tab_view.tab("📈 Telemetrie")
         
-        # Tab 1: Geschwindigkeit
-        speed_frame = plot_tabview.add("🚗 Geschwindigkeit")
-        self.fig = Figure(figsize=(6, 4), facecolor=self.plot_bg_color)
-        self.ax = self.fig.add_subplot(111, facecolor=self.plot_bg_color)
+        plot_container = ctk.CTkFrame(tab, fg_color=ColorPalette.BG_ELEVATED,
+                                     corner_radius=10)
+        plot_container.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.telemetry_tabs = ctk.CTkTabview(plot_container,
+                                            fg_color="transparent",
+                                            segmented_button_fg_color=ColorPalette.BG_CARD,
+                                            segmented_button_selected_color=ColorPalette.ACCENT_BLUE)
+        self.telemetry_tabs.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.telemetry_tabs.add("🏎️ Speed")
+        self.telemetry_tabs.add("⚡ Throttle/Brake")
+        self.telemetry_tabs.add("🔧 RPM/Gear")
+        
+        self.telemetry_plots = {}
+        for tab_name in ["🏎️ Speed", "⚡ Throttle/Brake", "🔧 RPM/Gear"]:
+            fig = Figure(figsize=(8, 5), facecolor=ColorPalette.BG_CARD)
+            ax = fig.add_subplot(111, facecolor=ColorPalette.BG_ELEVATED)
+            canvas = FigureCanvasTkAgg(fig, master=self.telemetry_tabs.tab(tab_name))
+            canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+            
+            self.telemetry_plots[tab_name] = {"fig": fig, "ax": ax, "canvas": canvas}
+            self.style_plot(ax)
 
-        # Tab 2: Gas & Bremse
-        throttle_frame = plot_tabview.add("⚡ Gas & Bremse")
-        self.fig2 = Figure(figsize=(6, 4), facecolor=self.plot_bg_color)
-        self.ax2 = self.fig2.add_subplot(111, facecolor=self.plot_bg_color)
+    def build_compare_tab(self):
+        """Erstellt den Vergleichs-Tab"""
+        tab = self.tab_view.tab("⚖️ Vergleich")
+        
+        controls = ctk.CTkFrame(tab, fg_color=ColorPalette.BG_ELEVATED,
+                               corner_radius=10, height=100)
+        controls.pack(fill="x", padx=10, pady=(10, 5))
+        controls.pack_propagate(False)
+        
+        controls_inner = ctk.CTkFrame(controls, fg_color="transparent")
+        controls_inner.pack(expand=True)
+        
+        ctk.CTkLabel(controls_inner, text="Fahrer 1:",
+                    font=ctk.CTkFont(size=12, weight="bold")).grid(row=0, column=0, padx=10, pady=5)
+        self.compare_driver1 = ctk.CTkComboBox(controls_inner, width=150,
+                                              fg_color=ColorPalette.BG_CARD,
+                                              button_color=ColorPalette.F1_RED)
+        self.compare_driver1.grid(row=1, column=0, padx=10, pady=5)
+        
+        ctk.CTkLabel(controls_inner, text="VS", 
+                    font=ctk.CTkFont(size=16, weight="bold"),
+                    text_color=ColorPalette.F1_RED).grid(row=1, column=1, padx=20)
+        
+        ctk.CTkLabel(controls_inner, text="Fahrer 2:",
+                    font=ctk.CTkFont(size=12, weight="bold")).grid(row=0, column=2, padx=10, pady=5)
+        self.compare_driver2 = ctk.CTkComboBox(controls_inner, width=150,
+                                              fg_color=ColorPalette.BG_CARD,
+                                              button_color=ColorPalette.ACCENT_BLUE)
+        self.compare_driver2.grid(row=1, column=2, padx=10, pady=5)
+        
+        ctk.CTkButton(controls_inner, text="🔍 Vergleichen",
+                     command=self.compare_drivers,
+                     fg_color=ColorPalette.ACCENT_GREEN,
+                     hover_color=ColorPalette.ACCENT_GREEN,
+                     width=150, height=40,
+                     font=ctk.CTkFont(size=13, weight="bold")).grid(row=1, column=3, padx=20)
+        
+        plot_container = ctk.CTkFrame(tab, fg_color=ColorPalette.BG_ELEVATED,
+                                     corner_radius=10)
+        plot_container.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+        
+        self.compare_fig = Figure(figsize=(10, 6), facecolor=ColorPalette.BG_CARD)
+        self.compare_ax = self.compare_fig.add_subplot(111, facecolor=ColorPalette.BG_ELEVATED)
+        self.compare_canvas = FigureCanvasTkAgg(self.compare_fig, master=plot_container)
+        self.compare_canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.style_plot(self.compare_ax)
 
-        # Tab 3: RPM & Gänge
-        rpm_frame = plot_tabview.add("🔧 RPM & Gänge")
-        self.fig3 = Figure(figsize=(6, 4), facecolor=self.plot_bg_color)
-        self.ax3 = self.fig3.add_subplot(111, facecolor=self.plot_bg_color)
+    def build_analysis_tab(self):
+        """Erstellt den Analyse-Tab"""
+        tab = self.tab_view.tab("🎯 Analyse")
+        
+        left = ctk.CTkFrame(tab, fg_color="transparent")
+        left.pack(side="left", fill="both", expand=True, padx=(10, 5), pady=10)
+        
+        right = ctk.CTkFrame(tab, fg_color="transparent")
+        right.pack(side="right", fill="both", expand=True, padx=(5, 10), pady=10)
+        
+        # Pace Analysis
+        pace_frame = ctk.CTkFrame(left, fg_color=ColorPalette.BG_ELEVATED,
+                                 corner_radius=10)
+        pace_frame.pack(fill="both", expand=True, pady=(0, 5))
+        
+        ctk.CTkLabel(pace_frame, text="📉 Pace-Analyse",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=10)
+        
+        self.pace_fig = Figure(figsize=(6, 4), facecolor=ColorPalette.BG_CARD)
+        self.pace_ax = self.pace_fig.add_subplot(111, facecolor=ColorPalette.BG_ELEVATED)
+        self.pace_canvas = FigureCanvasTkAgg(self.pace_fig, master=pace_frame)
+        self.pace_canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        self.style_plot(self.pace_ax)
+        
+        # Sector Analysis
+        sector_frame = ctk.CTkFrame(right, fg_color=ColorPalette.BG_ELEVATED,
+                                   corner_radius=10)
+        sector_frame.pack(fill="both", expand=True, pady=(0, 5))
+        
+        ctk.CTkLabel(sector_frame, text="🎯 Sektor-Analyse",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=10)
+        
+        self.sector_fig = Figure(figsize=(6, 4), facecolor=ColorPalette.BG_CARD)
+        self.sector_ax = self.sector_fig.add_subplot(111, facecolor=ColorPalette.BG_ELEVATED)
+        self.sector_canvas = FigureCanvasTkAgg(self.sector_fig, master=sector_frame)
+        self.sector_canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        self.style_plot(self.sector_ax)
 
-        # Tab 4: Vergleich
-        compare_frame = plot_tabview.add("⚖️ Vergleich")
-        self.fig4 = Figure(figsize=(6, 4), facecolor=self.plot_bg_color)
-        self.ax4 = self.fig4.add_subplot(111, facecolor=self.plot_bg_color)
+    def style_plot(self, ax):
+        """Stilisiert einen Matplotlib Axes"""
+        ax.set_facecolor(ColorPalette.BG_ELEVATED)
+        ax.tick_params(colors=ColorPalette.TEXT_PRIMARY, labelsize=9)
+        ax.xaxis.label.set_color(ColorPalette.TEXT_PRIMARY)
+        ax.yaxis.label.set_color(ColorPalette.TEXT_PRIMARY)
+        ax.title.set_color(ColorPalette.TEXT_PRIMARY)
+        
+        for spine in ax.spines.values():
+            spine.set_color(ColorPalette.BORDER)
+        
+        ax.grid(True, alpha=0.2, color=ColorPalette.BORDER, 
+               linestyle='--', linewidth=0.5)
 
-        # Canvas für alle Tabs
-        self.canvas = FigureCanvasTkAgg(self.fig, master=speed_frame)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
-
-        self.canvas2 = FigureCanvasTkAgg(self.fig2, master=throttle_frame)
-        self.canvas2.get_tk_widget().pack(fill="both", expand=True)
-
-        self.canvas3 = FigureCanvasTkAgg(self.fig3, master=rpm_frame)
-        self.canvas3.get_tk_widget().pack(fill="both", expand=True)
-
-        self.canvas4 = FigureCanvasTkAgg(self.fig4, master=compare_frame)
-        self.canvas4.get_tk_widget().pack(fill="both", expand=True)
-
-        # Initialisiere alle Plots
-        self.init_plots()
-
-        # Fahrer Auswahl Bereich
-        driver_frame = ctk.CTkFrame(right, fg_color=("gray85", "gray17"))
-        driver_frame.pack(fill="x", padx=10, pady=(0, 10))
-
-        driver_header = ctk.CTkFrame(driver_frame, fg_color="transparent")
-        driver_header.pack(fill="x", padx=10, pady=(10, 5))
-        ctk.CTkLabel(driver_header, text="👤 Fahrer auswählen", 
-                    font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
-        ctk.CTkLabel(driver_header, text="(Doppelklick für beste Runde)",
-                    font=ctk.CTkFont(size=10),
-                    text_color=("gray50", "gray50")).pack(side="left", padx=(10, 0))
-
-        # Scrollable Frame für Fahrerliste
-        self.driver_scroll = ctk.CTkScrollableFrame(driver_frame, height=120)
-        self.driver_scroll.pack(fill="x", padx=10, pady=(0, 10))
-        self.driver_buttons = []
-
-        # Vergleichsfunktion
-        compare_frame_ui = ctk.CTkFrame(driver_frame, fg_color="transparent")
-        compare_frame_ui.pack(fill="x", padx=10, pady=(0, 10))
-
-        ctk.CTkLabel(compare_frame_ui, text="⚖️ Fahrer vergleichen:",
-                    font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", padx=(0, 10))
-
-        self.compare_driver1 = ctk.CTkComboBox(compare_frame_ui, state="readonly", width=120)
-        self.compare_driver1.pack(side="left", padx=(0, 5))
-        ToolTip(self.compare_driver1, "Wählen Sie den ersten Fahrer zum Vergleichen")
-
-        self.compare_driver2 = ctk.CTkComboBox(compare_frame_ui, state="readonly", width=120)
-        self.compare_driver2.pack(side="left", padx=(0, 5))
-        ToolTip(self.compare_driver2, "Wählen Sie den zweiten Fahrer zum Vergleichen")
-
-        compare_btn = ctk.CTkButton(compare_frame_ui, text="Vergleichen",
-                                   command=self.compare_drivers,
-                                   fg_color=self.accent_color,
-                                   hover_color="#ff1a1a",
-                                   width=100)
-        compare_btn.pack(side="left")
-        ToolTip(compare_btn, "Vergleicht die besten Runden der beiden Fahrer")
-
-    # -----------------------------------------------------
-    def init_plots(self):
-        """Initialisiert alle Plots mit Platzhalter-Text"""
-        text_color = self.plot_text_color
-        bg_color = self.plot_bg_color
-        border_color = self.plot_border_color
-
-        for ax in [self.ax, self.ax2, self.ax3, self.ax4]:
-            ax.set_facecolor(bg_color)
-            ax.tick_params(colors=text_color)
-            ax.xaxis.label.set_color(text_color)
-            ax.yaxis.label.set_color(text_color)
-            ax.title.set_color(text_color)
-            for spine in ax.spines.values():
-                spine.set_color(border_color)
-            ax.grid(True, alpha=0.2, color=border_color, linestyle='--', linewidth=0.5)
-            ax.text(0.5, 0.5, 'Wähle eine Runde aus,\num Daten zu sehen',
-                   transform=ax.transAxes,
-                   ha='center', va='center',
-                   fontsize=12, color=text_color,
-                   style='italic')
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-        self.ax.text(0.5, 0.5, 'Wähle eine Session aus,\num Telemetriedaten zu laden',
-                    transform=self.ax.transAxes,
-                    ha='center', va='center',
-                    fontsize=12, color=text_color,
-                    style='italic')
-
-        for fig in [self.fig, self.fig2, self.fig3, self.fig4]:
-            fig.patch.set_facecolor(bg_color)
-
-    # -----------------------------------------------------
+    # === DATA LOADING ===
+    
     def load_years(self):
-        from datetime import datetime
+        """Lädt verfügbare Jahre"""
         years = list(range(1950, datetime.now().year + 1))
         years.reverse()
-        # Konvertiere zu Strings für CustomTkinter
         self.year_cb.configure(values=[str(y) for y in years])
+        default_year = years[0]
+        if self.config and self.config.last_year in years:
+            default_year = self.config.last_year
+        self.year_var.set(str(default_year))
+        self.on_year_selected()
 
-    # -----------------------------------------------------
     def on_year_selected(self, choice=None):
+        """Jahr wurde ausgewählt"""
         if not self.year_var.get():
             return
+        
         year = int(self.year_var.get())
-        self.update_status(f"Lade Events für {year}...")
-        try:
-            self.events = fastf1.get_event_schedule(year)
-            gps = [e['EventName'] for _, e in self.events.iterrows()]
-            self.gp_cb.configure(values=gps)
-            self.update_status(f"{len(gps)} Grand Prix gefunden")
-        except Exception as e:
-            messagebox.showerror("Fehler beim Laden der Events", str(e))
-            self.update_status("Fehler beim Laden")
+        if self.config:
+            self.config.last_year = year
+            save_config(self.config)
+        self.loading.show(f"📅 Lade Events für {year}...")
+        
+        def load_events():
+            try:
+                self.events = self.data_service.get_event_schedule(year)
+                gps = [e['EventName'] for _, e in self.events.iterrows()]
+                self.root.after(0, lambda: self.gp_cb.configure(values=gps))
+                if self.config and self.config.last_event in gps and self.config.last_year == year:
+                    self.root.after(0, lambda: self.gp_var.set(self.config.last_event))
+                self.root.after(0, lambda: self.loading.hide())
+            except Exception as e:
+                self.root.after(0, lambda: self.show_error("Fehler beim Laden", str(e)))
+                self.root.after(0, lambda: self.loading.hide())
+        
+        threading.Thread(target=load_events, daemon=True).start()
 
-    # -----------------------------------------------------
     def load_session(self):
+        """Lädt eine Session"""
         if self.events is None:
-            messagebox.showerror("Fehler", "Bitte wählen Sie zuerst ein Jahr aus.")
+            self.show_error("Fehler", "Bitte wählen Sie zuerst ein Jahr aus.")
             return
-
+        
         year = int(self.year_var.get())
         gp_name = self.gp_var.get()
         ses = self.ses_var.get()
-
+        if gp_name and ses and self.config:
+            self.config.last_event = gp_name
+            self.config.last_session = ses
+            save_config(self.config)
+        
         if not gp_name or not ses:
-            messagebox.showerror("Fehler", "Bitte wählen Sie einen Grand Prix und eine Session aus.")
+            self.show_error("Fehler", "Bitte wählen Sie einen Grand Prix und eine Session aus.")
             return
-
-        # Deaktiviere Button während Laden
+        
+        self.loading.show(f"🏎️ Lade {year} {gp_name} {ses}...")
         self.load_btn.configure(state="disabled")
-        self.progress_bar.pack(side="right", padx=(10, 0))
-        self.progress_bar.set(0)
-        self.update_status(f"Lade Session {year} {gp_name} {ses}...")
-
-        # Lade in separatem Thread
+        
         def load_thread():
             try:
                 event = self.events.loc[self.events['EventName'] == gp_name].iloc[0]
-                session = fastf1.get_session(year, event['EventName'], ses)
+                session = self.data_service.get_session(year, event['EventName'], ses)
                 
-                # Simuliere Progress
-                self.root.after(0, lambda: self.progress_bar.set(0.3))
-                session.load(telemetry=True, laps=True, messages=True)
-                self.root.after(0, lambda: self.progress_bar.set(1.0))
+                self.root.after(0, lambda: self.loading.set_progress(0.3))
+                session.load(telemetry=True, laps=True, messages=False)
+                self.root.after(0, lambda: self.loading.set_progress(1.0))
                 
                 self.session = session
                 self.root.after(0, self.on_session_loaded)
             except Exception as e:
-                self.root.after(0, lambda: self.on_load_error(str(e)))
-
+                self.root.after(0, lambda: self.show_error("Ladefehler", str(e)))
+                self.root.after(0, lambda: self.loading.hide())
+                self.root.after(0, lambda: self.load_btn.configure(state="normal"))
+        
         threading.Thread(target=load_thread, daemon=True).start()
 
-    # -----------------------------------------------------
     def on_session_loaded(self):
+        """Callback wenn Session geladen wurde"""
+        self.update_header()
+        self.update_dashboard()
         self.fill_laps()
-        self.fill_drivers()
-        self.progress_bar.pack_forget()
+        self.update_compare_drivers()
+        self.plot_pace_analysis()
+        self.plot_sector_analysis()
+        self.update_race_results()
+        
+        self.loading.hide()
         self.load_btn.configure(state="normal")
-        self.update_status("Session geladen")
 
-    # -----------------------------------------------------
-    def on_load_error(self, error_msg):
-        messagebox.showerror("Fehler beim Laden", f"Die Session konnte nicht geladen werden:\n{error_msg}")
-        self.progress_bar.pack_forget()
-        self.load_btn.configure(state="normal")
-        self.update_status("Fehler beim Laden")
-
-    # -----------------------------------------------------
-    def update_status(self, message):
-        self.status_label.configure(text=message)
-
-    # -----------------------------------------------------
-    def update_dashboard(self):
-        """Aktualisiert das Dashboard mit Session-Statistiken"""
-        if self.session is None:
-            for key in self.stat_labels:
-                self.stat_labels[key].configure(text="—")
+    # === STANDINGS & RESULTS ===
+    
+    def update_race_results(self):
+        """Aktualisiert Race Results"""
+        if not self.session:
             return
+        
+        try:
+            def parse_position(value, fallback):
+                if pd.isna(value):
+                    return fallback
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return fallback
 
+            # Check if it's a race session
+            if self.ses_var.get() != 'R':
+                # Show info message and clear
+                self.race_info_label.pack(pady=20)
+                self.results_table.delete(*self.results_table.get_children())
+                self.podium.clear()
+                return
+            else:
+                # Hide info message
+                self.race_info_label.pack_forget()
+            
+            # Get results from session
+            results = self.session.results
+            
+            # If no results object, try to construct from laps
+            if results is None or results.empty:
+                print("No results object, trying to construct from laps...")
+                laps = self.session.laps
+                if laps.empty:
+                    self.podium.clear()
+                    return
+                
+                # Get final positions from last lap
+                final_laps = laps.groupby('Driver').last().reset_index()
+                final_laps = final_laps.sort_values('Position')
+                
+                # Clear table
+                self.results_table.delete(*self.results_table.get_children())
+                self.podium.clear()
+                
+                # Fill table with lap data
+                for idx, lap_data in final_laps.iterrows():
+                    position = parse_position(lap_data.get('Position'), idx + 1)
+                    driver = lap_data.get('Driver', '?')
+                    team = lap_data.get('Team', '-')
+                    
+                    # Calculate points based on position
+                    points_map = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+                    points = points_map.get(position, 0)
+                    
+                    time_str = self.format_time(lap_data.get('LapTime', '—'))
+                    
+                    tags = []
+                    if position == 1:
+                        tags = ['p1']
+                    elif position == 2:
+                        tags = ['p2']
+                    elif position == 3:
+                        tags = ['p3']
+                    
+                    self.results_table.insert("", "end", values=(
+                        position, driver, team, time_str, points, "Finished"
+                    ), tags=tags)
+                    
+                    # Update podium
+                    if position <= 3:
+                        self.podium.set_position(position, driver, team, time_str, points)
+                
+                # Style
+                self.results_table.tag_configure('p1', background=ColorPalette.GOLD, foreground="#000000")
+                self.results_table.tag_configure('p2', background=ColorPalette.SILVER, foreground="#000000")
+                self.results_table.tag_configure('p3', background=ColorPalette.BRONZE, foreground="#000000")
+                return
+            
+            # Clear table
+            self.results_table.delete(*self.results_table.get_children())
+            self.podium.clear()
+            
+            # Podium (Top 3)
+            for i in range(min(3, len(results))):
+                result = results.iloc[i]
+                position = i + 1
+                
+                # Get driver info
+                driver = str(result.get('Abbreviation', result.get('DriverNumber', '?')))
+                team = str(result.get('TeamName', '—'))
+                
+                # Time/Gap
+                if position == 1:
+                    time_val = result.get('Time')
+                    if pd.notna(time_val):
+                        time_str = self.format_time(time_val)
+                    else:
+                        time_str = "—"
+                else:
+                    time_val = result.get('Time')
+                    winner_time = results.iloc[0].get('Time')
+                    if pd.notna(time_val) and pd.notna(winner_time):
+                        gap = time_val - winner_time
+                        time_str = f"+{self.format_time(gap)}"
+                    else:
+                        time_str = "—"
+                
+                points = int(result.get('Points', 0))
+                
+                self.podium.set_position(position, driver, team, time_str, points)
+            
+            # Full results table
+            for idx, result in results.iterrows():
+                position = parse_position(result.get('Position'), idx + 1)
+                driver = str(result.get('Abbreviation', result.get('DriverNumber', '?')))
+                team = str(result.get('TeamName', '-'))
+                
+                if position == 1:
+                    time_val = result.get('Time')
+                    if pd.notna(time_val):
+                        time_str = self.format_time(time_val)
+                    else:
+                        time_str = "—"
+                else:
+                    time_val = result.get('Time')
+                    winner_time = results.iloc[0].get('Time')
+                    if pd.notna(time_val) and pd.notna(winner_time):
+                        gap = time_val - winner_time
+                        time_str = f"+{self.format_time(gap)}"
+                    else:
+                        time_str = "—"
+                
+                points = int(result.get('Points', 0))
+                status = str(result.get('Status', 'Finished'))
+                
+                # Color based on position
+                tags = []
+                if position == 1:
+                    tags = ['p1']
+                elif position == 2:
+                    tags = ['p2']
+                elif position == 3:
+                    tags = ['p3']
+                
+                self.results_table.insert("", "end", values=(
+                    position, driver, team, time_str, points, status
+                ), tags=tags)
+            
+            # Style podium positions
+            self.results_table.tag_configure('p1', background=ColorPalette.GOLD, foreground="#000000")
+            self.results_table.tag_configure('p2', background=ColorPalette.SILVER, foreground="#000000")
+            self.results_table.tag_configure('p3', background=ColorPalette.BRONZE, foreground="#000000")
+            
+        except Exception as e:
+            print(f"Race Results Error: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def show_championship(self):
+        """Zeigt Championship Standings"""
+        if not self.year_var.get():
+            self.show_error("Fehler", "Bitte wählen Sie zuerst ein Jahr aus.")
+            return
+        
+        year = int(self.year_var.get())
+        self.loading.show(f"🏆 Lade Championship {year}...")
+        
+        def load_championship():
+            try:
+                # Get event schedule for the year
+                schedule = fastf1.get_event_schedule(year)
+                
+                # Driver standings
+                driver_standings = {}
+                constructor_standings = {}
+                
+                # Process each round
+                for idx, event in schedule.iterrows():
+                    try:
+                        if event['EventFormat'] != 'conventional':
+                            continue
+                        
+                        session = fastf1.get_session(year, event['EventName'], 'R')
+                        session.load(laps=False, telemetry=False, weather=False, messages=False)
+                        
+                        if session.results is not None:
+                            results = session.results
+                            
+                            # Update driver standings
+                            for _, result in results.iterrows():
+                                driver = result.get('Abbreviation', result.get('DriverNumber'))
+                                points = result.get('Points', 0)
+                                team = result.get('TeamName', '—')
+                                
+                                if driver not in driver_standings:
+                                    driver_standings[driver] = {
+                                        'points': 0,
+                                        'wins': 0,
+                                        'team': team
+                                    }
+                                
+                                driver_standings[driver]['points'] += points
+                                if result.get('Position') == 1:
+                                    driver_standings[driver]['wins'] += 1
+                                driver_standings[driver]['team'] = team
+                                
+                                # Constructor standings
+                                if team not in constructor_standings:
+                                    constructor_standings[team] = {'points': 0, 'wins': 0}
+                                constructor_standings[team]['points'] += points
+                                if result.get('Position') == 1:
+                                    constructor_standings[team]['wins'] += 1
+                    except:
+                        continue
+                
+                self.root.after(0, lambda: self.display_championship(
+                    driver_standings, constructor_standings
+                ))
+                self.root.after(0, lambda: self.loading.hide())
+                
+            except Exception as e:
+                self.root.after(0, lambda: self.show_error("Championship Error", str(e)))
+                self.root.after(0, lambda: self.loading.hide())
+        
+        threading.Thread(target=load_championship, daemon=True).start()
+
+    def display_championship(self, driver_standings, constructor_standings):
+        """Zeigt Championship Daten an"""
+        # Clear tables
+        self.driver_standings_table.delete(*self.driver_standings_table.get_children())
+        self.constructor_standings_table.delete(*self.constructor_standings_table.get_children())
+        
+        # Driver standings
+        sorted_drivers = sorted(driver_standings.items(), 
+                               key=lambda x: x[1]['points'], 
+                               reverse=True)
+        
+        for pos, (driver, data) in enumerate(sorted_drivers, 1):
+            tags = []
+            if pos == 1:
+                tags = ['p1']
+            elif pos == 2:
+                tags = ['p2']
+            elif pos == 3:
+                tags = ['p3']
+            
+            self.driver_standings_table.insert("", "end", values=(
+                pos, driver, data['team'], int(data['points']), data['wins']
+            ), tags=tags)
+        
+        # Constructor standings
+        sorted_constructors = sorted(constructor_standings.items(),
+                                    key=lambda x: x[1]['points'],
+                                    reverse=True)
+        
+        for pos, (team, data) in enumerate(sorted_constructors, 1):
+            tags = []
+            if pos == 1:
+                tags = ['p1']
+            elif pos == 2:
+                tags = ['p2']
+            elif pos == 3:
+                tags = ['p3']
+            
+            self.constructor_standings_table.insert("", "end", values=(
+                pos, team, int(data['points']), data['wins']
+            ), tags=tags)
+        
+        # Style
+        for table in [self.driver_standings_table, self.constructor_standings_table]:
+            table.tag_configure('p1', background=ColorPalette.GOLD)
+            table.tag_configure('p2', background=ColorPalette.SILVER)
+            table.tag_configure('p3', background=ColorPalette.BRONZE)
+        
+        # Plot driver points chart
+        self.plot_driver_points(sorted_drivers[:10])  # Top 10
+        
+        # Plot constructor points chart
+        self.plot_constructor_points(sorted_constructors[:10])  # Top 10
+        
+        # Switch to Standings tab
+        self.tab_view.set("🏆 Standings")
+
+    def plot_driver_points(self, sorted_drivers):
+        """Plottet Fahrer-Punkte"""
+        try:
+            ax = self.driver_points_ax
+            ax.clear()
+            
+            drivers = [d[0] for d in sorted_drivers]
+            points = [d[1]['points'] for d in sorted_drivers]
+            
+            colors = [ColorPalette.GOLD if i == 0 else 
+                     ColorPalette.SILVER if i == 1 else
+                     ColorPalette.BRONZE if i == 2 else
+                     ColorPalette.ACCENT_BLUE
+                     for i in range(len(drivers))]
+            
+            bars = ax.barh(drivers, points, color=colors, alpha=0.8)
+            
+            # Add value labels
+            for i, (bar, point) in enumerate(zip(bars, points)):
+                ax.text(point + 5, i, f'{int(point)}', 
+                       va='center', fontweight='bold',
+                       color=ColorPalette.TEXT_PRIMARY)
+            
+            ax.set_xlabel('Punkte', color=ColorPalette.TEXT_PRIMARY)
+            ax.set_title('Top 10 Fahrer', pad=15, fontweight='bold')
+            ax.invert_yaxis()
+            
+            self.style_plot(ax)
+            self.driver_points_canvas.draw()
+            
+        except Exception as e:
+            print(f"Driver Points Plot Error: {e}")
+
+    def plot_constructor_points(self, sorted_constructors):
+        """Plottet Konstrukteur-Punkte"""
+        try:
+            ax = self.constructor_points_ax
+            ax.clear()
+            
+            teams = [t[0] for t in sorted_constructors]
+            points = [t[1]['points'] for t in sorted_constructors]
+            
+            # Get team colors
+            colors = [TEAM_COLORS.get(team, ColorPalette.ACCENT_BLUE) 
+                     for team in teams]
+            
+            bars = ax.barh(teams, points, color=colors, alpha=0.8)
+            
+            # Add value labels
+            for i, (bar, point) in enumerate(zip(bars, points)):
+                ax.text(point + 10, i, f'{int(point)}',
+                       va='center', fontweight='bold',
+                       color=ColorPalette.TEXT_PRIMARY)
+            
+            ax.set_xlabel('Punkte', color=ColorPalette.TEXT_PRIMARY)
+            ax.set_title('Top 10 Teams', pad=15, fontweight='bold')
+            ax.invert_yaxis()
+            
+            self.style_plot(ax)
+            self.constructor_points_canvas.draw()
+            
+        except Exception as e:
+            print(f"Constructor Points Plot Error: {e}")
+
+    # === UI UPDATES ===
+    
+    def update_header(self):
+        """Aktualisiert den Header"""
+        if self.session:
+            year = self.year_var.get()
+            gp = self.gp_var.get()
+            ses = self.ses_var.get()
+            
+            self.session_title.configure(text=f"{gp} {year}")
+            self.session_subtitle.configure(text=f"Session: {ses}")
+
+    def update_dashboard(self):
+        """Aktualisiert die Dashboard-Karten"""
+        if not self.session:
+            return
+        
         try:
             laps = self.session.laps
-
-            # Beste Zeit
             valid_laps = laps[laps['LapTime'].notna()]
-            if not valid_laps.empty:
-                best_lap = valid_laps.nsmallest(1, 'LapTime').iloc[0]
-                best_time = self.format_time(best_lap['LapTime'])
-                fastest_driver = best_lap.get('Driver', '—')
-            else:
-                best_time = "—"
-                fastest_driver = "—"
-
-            # Anzahl Runden
-            total_laps = len(laps[laps['LapTime'].notna()])
-
-            # Anzahl Fahrer
-            total_drivers = len(laps['Driver'].unique()) if not laps.empty else 0
-
-            # Session Typ
-            session_type = self.ses_var.get() if self.ses_var.get() else "—"
-
-            # Update Labels
-            self.stat_labels['best_time'].configure(text=best_time)
-            self.stat_labels['fastest_driver'].configure(text=fastest_driver)
-            self.stat_labels['total_laps'].configure(text=str(total_laps))
-            self.stat_labels['total_drivers'].configure(text=str(total_drivers))
-            self.stat_labels['session_type'].configure(text=session_type)
-
+            
+            if valid_laps.empty:
+                return
+            
+            best_lap = valid_laps.nsmallest(1, 'LapTime').iloc[0]
+            best_time = self.format_time(best_lap['LapTime'])
+            fastest_driver = best_lap.get('Driver', '—')
+            
+            total_laps = len(valid_laps)
+            total_drivers = len(laps['Driver'].unique())
+            
+            avg_speed = valid_laps['Speed'].mean() if 'Speed' in valid_laps.columns else 0
+            
+            best_sectors = []
+            for col in ['Sector1Time', 'Sector2Time', 'Sector3Time']:
+                if col in valid_laps.columns:
+                    sector_valid = valid_laps[valid_laps[col].notna()]
+                    if not sector_valid.empty:
+                        best_sectors.append(sector_valid[col].min().total_seconds())
+            
+            best_sector_time = min(best_sectors) if best_sectors else 0
+            
+            self.stat_cards['best_time'].set_value(best_time, "Schnellste Runde")
+            self.stat_cards['fastest_driver'].set_value(fastest_driver, "Pilot")
+            self.stat_cards['total_laps'].set_value(total_laps, "Runden gesamt", animate=True)
+            self.stat_cards['total_drivers'].set_value(total_drivers, "Teilnehmer", animate=True)
+            self.stat_cards['avg_speed'].set_value(f"{avg_speed:.1f} km/h", "Durchschnitt")
+            self.stat_cards['best_sector'].set_value(f"{best_sector_time:.3f}s", "Sektor")
+            
         except Exception as e:
-            print(f"Fehler beim Aktualisieren des Dashboards: {e}")
+            print(f"Dashboard Update Error: {e}")
 
-    # -----------------------------------------------------
+    def fill_laps(self):
+        """Füllt die Laps-Tabelle"""
+        self.lap_table.delete(*self.lap_table.get_children())
+        
+        if not self.session:
+            return
+        
+        try:
+            laps = self.session.laps.copy()
+            
+            if self.filter_text:
+                laps = laps[
+                    laps['Driver'].str.lower().str.contains(self.filter_text, na=False) |
+                    laps['Team'].str.lower().str.contains(self.filter_text, na=False)
+                ]
+            
+            sort_map = {
+                "Pos": "Position",
+                "Fahrer": "Driver",
+                "Team": "Team",
+                "Runde": "LapNumber",
+                "Zeit": "LapTime",
+                "S1": "Sector1Time",
+                "S2": "Sector2Time",
+                "S3": "Sector3Time",
+                "Tempo": "Speed"
+            }
+            sort_key = sort_map.get(self.sort_column)
+            if sort_key and sort_key in laps.columns:
+                if sort_key in ["Position", "LapNumber", "Speed"]:
+                    laps = laps.assign(_sort=pd.to_numeric(laps[sort_key], errors="coerce"))
+                    laps = laps.sort_values(by="_sort",
+                                            ascending=not self.sort_reverse,
+                                            na_position='last').drop(columns=["_sort"])
+                else:
+                    laps = laps.sort_values(by=sort_key,
+                                            ascending=not self.sort_reverse,
+                                            na_position='last')
+            else:
+                laps = laps.sort_values(by='LapTime', ascending=True, na_position='last')
+            
+            fastest_laps = {}
+            for driver in laps['Driver'].unique():
+                driver_laps = laps[laps['Driver'] == driver]
+                if not driver_laps.empty:
+                    fastest = driver_laps.nsmallest(1, 'LapTime')
+                    if not fastest.empty and pd.notna(fastest.iloc[0]['LapTime']):
+                        fastest_laps[driver] = fastest.iloc[0]['LapTime']
+            
+            valid_laps = laps[laps['LapTime'].notna()]
+            best_time = valid_laps['LapTime'].min() if not valid_laps.empty else None
+            
+            for idx, lap in laps.head(100).iterrows():
+                pos = int(lap['Position']) if pd.notna(lap.get('Position')) else idx + 1
+                driver = lap.get('Driver', '—')
+                team = lap.get('Team', '—')
+                lap_num = int(lap.get('LapNumber', 0))
+                
+                lap_time = self.format_time(lap.get('LapTime'))
+                s1 = self.format_time(lap.get('Sector1Time'))
+                s2 = self.format_time(lap.get('Sector2Time'))
+                s3 = self.format_time(lap.get('Sector3Time'))
+                speed = f"{lap.get('Speed', 0):.1f}" if pd.notna(lap.get('Speed')) else '—'
+                
+                is_best = ""
+                if driver in fastest_laps and pd.notna(lap.get('LapTime')):
+                    if lap['LapTime'] == fastest_laps[driver]:
+                        is_best = "⭐"
+                
+                tags = []
+                if best_time is not None and pd.notna(lap.get('LapTime')):
+                    if lap['LapTime'] == best_time:
+                        tags = ['fastest']
+                
+                iid = f"{driver}_{lap_num}"
+                self.lap_table.insert("", "end", iid=iid, tags=tags,
+                                     values=(pos, driver, team, lap_num, lap_time,
+                                            s1, s2, s3, speed, is_best))
+            
+            self.lap_table.tag_configure('fastest', 
+                                        background=ColorPalette.SUCCESS,
+                                        foreground=ColorPalette.TEXT_PRIMARY)
+            
+        except Exception as e:
+            print(f"Fill Laps Error: {e}")
+
+    def update_compare_drivers(self):
+        """Aktualisiert die Fahrer-Auswahl für Vergleich"""
+        if not self.session:
+            return
+        
+        drivers = sorted({d for d in self.session.laps['Driver'] if pd.notna(d)})
+        self.compare_driver1.configure(values=drivers)
+        self.compare_driver2.configure(values=drivers)
+
+    # === PLOTS ===
+    
+    def plot_lap_telemetry(self, lap):
+        """Plottet Telemetrie für eine Runde"""
+        try:
+            tel = lap.get_car_data().add_distance()
+            if tel is None or tel.empty:
+                return
+            
+            dist = tel['Distance']
+            driver = lap.get('Driver', 'Unknown')
+            lap_num = lap.get('LapNumber', '?')
+            
+            # Speed
+            plot = self.telemetry_plots["🏎️ Speed"]
+            ax = plot['ax']
+            ax.clear()
+            
+            ax.plot(dist, tel['Speed'], color=ColorPalette.F1_RED, linewidth=2.5)
+            ax.fill_between(dist, tel['Speed'], alpha=0.3, color=ColorPalette.F1_RED)
+            ax.set_xlabel('Distanz (m)')
+            ax.set_ylabel('Geschwindigkeit (km/h)')
+            ax.set_title(f'{driver} - Runde {lap_num}', pad=15, fontweight='bold')
+            
+            self.style_plot(ax)
+            plot['canvas'].draw()
+            
+            # Throttle/Brake
+            if 'Throttle' in tel.columns and 'Brake' in tel.columns:
+                plot = self.telemetry_plots["⚡ Throttle/Brake"]
+                ax = plot['ax']
+                ax.clear()
+                
+                ax.plot(dist, tel['Throttle'] * 100, color=ColorPalette.ACCENT_GREEN, 
+                       linewidth=2, label='Gas', alpha=0.8)
+                ax.plot(dist, tel['Brake'] * 100, color=ColorPalette.ERROR, 
+                       linewidth=2, label='Bremse', alpha=0.8)
+                ax.fill_between(dist, tel['Throttle'] * 100, alpha=0.2, 
+                               color=ColorPalette.ACCENT_GREEN)
+                ax.fill_between(dist, tel['Brake'] * 100, alpha=0.2, 
+                               color=ColorPalette.ERROR)
+                
+                ax.set_xlabel('Distanz (m)')
+                ax.set_ylabel('Prozent (%)')
+                ax.set_title('Gas & Bremse', pad=15, fontweight='bold')
+                ax.legend(loc='upper right')
+                ax.set_ylim(0, 105)
+                
+                self.style_plot(ax)
+                plot['canvas'].draw()
+            
+            # RPM/Gear
+            if 'RPM' in tel.columns:
+                plot = self.telemetry_plots["🔧 RPM/Gear"]
+                ax = plot['ax']
+                ax.clear()
+                
+                color = ColorPalette.ACCENT_ORANGE
+                ax.plot(dist, tel['RPM'], color=color, linewidth=2.5, label='RPM')
+                ax.fill_between(dist, tel['RPM'], alpha=0.3, color=color)
+                ax.set_xlabel('Distanz (m)')
+                ax.set_ylabel('RPM')
+                ax.set_title('Motor & Getriebe', pad=15, fontweight='bold')
+                
+                if 'nGear' in tel.columns:
+                    ax2 = ax.twinx()
+                    ax2.plot(dist, tel['nGear'], color=ColorPalette.ACCENT_BLUE,
+                            linewidth=2, alpha=0.8, linestyle='--', label='Gang')
+                    ax2.set_ylabel('Gang', color=ColorPalette.ACCENT_BLUE)
+                    ax2.tick_params(colors=ColorPalette.ACCENT_BLUE)
+                    ax2.set_ylim(0.5, 8.5)
+                
+                self.style_plot(ax)
+                ax.tick_params(colors=color)
+                ax.yaxis.label.set_color(color)
+                plot['canvas'].draw()
+            
+        except Exception as e:
+            print(f"Telemetry Plot Error: {e}")
+
+    def compare_drivers(self):
+        """Vergleicht zwei Fahrer"""
+        if not self.session:
+            return
+        
+        driver1 = self.compare_driver1.get()
+        driver2 = self.compare_driver2.get()
+        
+        if not driver1 or not driver2 or driver1 == driver2:
+            return
+        
+        try:
+            laps1 = self.session.laps.pick_drivers(driver1)
+            laps2 = self.session.laps.pick_drivers(driver2)
+            
+            if laps1.empty or laps2.empty:
+                return
+            
+            lap1 = laps1.pick_fastest()
+            lap2 = laps2.pick_fastest()
+            
+            tel1 = lap1.get_car_data().add_distance()
+            tel2 = lap2.get_car_data().add_distance()
+            
+            if tel1 is None or tel1.empty or tel2 is None or tel2.empty:
+                return
+            
+            ax = self.compare_ax
+            ax.clear()
+            
+            ax.plot(tel1['Distance'], tel1['Speed'], 
+                   color=ColorPalette.F1_RED, linewidth=2.5,
+                   label=f"{driver1} ({self.format_time(lap1['LapTime'])})", alpha=0.9)
+            ax.plot(tel2['Distance'], tel2['Speed'], 
+                   color=ColorPalette.ACCENT_BLUE, linewidth=2.5,
+                   label=f"{driver2} ({self.format_time(lap2['LapTime'])})", alpha=0.9)
+            
+            ax.fill_between(tel1['Distance'], tel1['Speed'], 
+                           alpha=0.2, color=ColorPalette.F1_RED)
+            ax.fill_between(tel2['Distance'], tel2['Speed'], 
+                           alpha=0.2, color=ColorPalette.ACCENT_BLUE)
+            
+            ax.set_xlabel('Distanz (m)')
+            ax.set_ylabel('Geschwindigkeit (km/h)')
+            ax.set_title(f'{driver1} vs {driver2}', pad=15, fontweight='bold', fontsize=14)
+            ax.legend(loc='upper right', fontsize=11)
+            
+            self.style_plot(ax)
+            self.compare_canvas.draw()
+            
+        except Exception as e:
+            print(f"Compare Error: {e}")
+
+    def plot_pace_analysis(self):
+        """Plottet Pace-Analyse"""
+        if not self.session:
+            return
+        
+        try:
+            laps = self.session.laps
+            valid_laps = laps[laps['LapTime'].notna()]
+            
+            if valid_laps.empty:
+                return
+            
+            ax = self.pace_ax
+            ax.clear()
+            
+            drivers = valid_laps['Driver'].unique()[:10]
+            colors = plt.cm.rainbow(np.linspace(0, 1, len(drivers)))
+            
+            for i, driver in enumerate(drivers):
+                driver_laps = valid_laps[valid_laps['Driver'] == driver]
+                lap_times = [t.total_seconds() for t in driver_laps['LapTime']]
+                lap_nums = driver_laps['LapNumber'].tolist()
+                
+                ax.plot(lap_nums, lap_times, marker='o', markersize=4,
+                       linewidth=2, label=driver, color=colors[i], alpha=0.7)
+            
+            ax.set_xlabel('Rundennummer')
+            ax.set_ylabel('Rundenzeit (Sekunden)')
+            ax.set_title('Pace-Entwicklung', pad=15, fontweight='bold')
+            ax.legend(loc='upper right', fontsize=8, ncol=2)
+            
+            self.style_plot(ax)
+            self.pace_canvas.draw()
+            
+        except Exception as e:
+            print(f"Pace Analysis Error: {e}")
+
+    def plot_sector_analysis(self):
+        """Plottet Sektor-Analyse"""
+        if not self.session:
+            return
+        
+        try:
+            def min_sector_time(df, column):
+                if column not in df.columns:
+                    return 0
+                values = df[column].dropna()
+                if values.empty:
+                    return 0
+                min_val = values.min()
+                if hasattr(min_val, "total_seconds"):
+                    return min_val.total_seconds()
+                try:
+                    return float(min_val)
+                except (TypeError, ValueError):
+                    return 0
+
+            laps = self.session.laps
+            valid_laps = laps[laps['LapTime'].notna()]
+            
+            if valid_laps.empty:
+                return
+            
+            ax = self.sector_ax
+            ax.clear()
+            
+            drivers = sorted(valid_laps['Driver'].unique())[:10]
+            s1_times = []
+            s2_times = []
+            s3_times = []
+            
+            for driver in drivers:
+                driver_laps = valid_laps[valid_laps['Driver'] == driver]
+                s1 = min_sector_time(driver_laps, 'Sector1Time')
+                s2 = min_sector_time(driver_laps, 'Sector2Time')
+                s3 = min_sector_time(driver_laps, 'Sector3Time')
+                
+                s1_times.append(s1)
+                s2_times.append(s2)
+                s3_times.append(s3)
+            
+            x = np.arange(len(drivers))
+            width = 0.25
+            
+            ax.bar(x - width, s1_times, width, label='Sektor 1', 
+                  color=ColorPalette.F1_RED, alpha=0.8)
+            ax.bar(x, s2_times, width, label='Sektor 2', 
+                  color=ColorPalette.ACCENT_BLUE, alpha=0.8)
+            ax.bar(x + width, s3_times, width, label='Sektor 3', 
+                  color=ColorPalette.ACCENT_GREEN, alpha=0.8)
+            
+            ax.set_xlabel('Fahrer')
+            ax.set_ylabel('Zeit (Sekunden)')
+            ax.set_title('Beste Sektorzeiten', pad=15, fontweight='bold')
+            ax.set_xticks(x)
+            ax.set_xticklabels(drivers, rotation=45, ha='right')
+            ax.legend(loc='upper right')
+            
+            self.style_plot(ax)
+            self.sector_canvas.draw()
+            
+        except Exception as e:
+            print(f"Sector Analysis Error: {e}")
+
+    # === EVENTS ===
+    
+    def on_lap_selected(self, event):
+        """Runde wurde in Tabelle ausgewählt"""
+        if not self.session:
+            return
+        
+        sel = self.lap_table.selection()
+        if not sel:
+            return
+        
+        try:
+            iid = sel[0]
+            driver, lapnum = iid.rsplit("_", 1)
+            lapnum = int(float(lapnum))
+            
+            lap = self.session.laps[
+                (self.session.laps['Driver'] == driver) & 
+                (self.session.laps['LapNumber'] == lapnum)
+            ]
+            
+            if lap.empty:
+                return
+            
+            lap = lap.iloc[0]
+            self.plot_lap_telemetry(lap)
+            
+        except Exception as e:
+            print(f"Lap Selection Error: {e}")
+
+    def on_search_changed(self, event=None):
+        """Suche wurde geändert"""
+        self.filter_text = self.search_entry.get().lower()
+        self.fill_laps()
+
+    def sort_table(self, column):
+        """Sortiert Tabelle nach Spalte"""
+        if self.sort_column == column:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = column
+            self.sort_reverse = False
+        self.fill_laps()
+
+    # === ACTIONS ===
+    
+    def export_data(self):
+        """Exportiert Daten"""
+        if not self.session:
+            self.show_error("Fehler", "Keine Session geladen.")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), 
+                      ("Excel files", "*.xlsx"), 
+                      ("All files", "*.*")]
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            data = []
+            for item in self.lap_table.get_children():
+                values = self.lap_table.item(item, 'values')
+                data.append({
+                    'Position': values[0],
+                    'Fahrer': values[1],
+                    'Team': values[2],
+                    'Runde': values[3],
+                    'Zeit': values[4],
+                    'Sektor 1': values[5],
+                    'Sektor 2': values[6],
+                    'Sektor 3': values[7],
+                    'Tempo': values[8],
+                    'Best': values[9]
+                })
+            
+            df = pd.DataFrame(data)
+            
+            if filename.endswith('.xlsx'):
+                df.to_excel(filename, index=False)
+            else:
+                df.to_csv(filename, index=False, encoding='utf-8-sig')
+            
+            messagebox.showinfo("Erfolg", f"Daten exportiert nach:\n{filename}")
+            
+        except Exception as e:
+            self.show_error("Export Fehler", str(e))
+
+    def export_plot(self):
+        """Exportiert Charts"""
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), 
+                      ("PDF files", "*.pdf"), 
+                      ("All files", "*.*")]
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            if filename.endswith('.pdf'):
+                from matplotlib.backends.backend_pdf import PdfPages
+                with PdfPages(filename) as pdf:
+                    for plot_dict in self.telemetry_plots.values():
+                        pdf.savefig(plot_dict['fig'], bbox_inches='tight')
+                    pdf.savefig(self.compare_fig, bbox_inches='tight')
+                    pdf.savefig(self.pace_fig, bbox_inches='tight')
+                    pdf.savefig(self.sector_fig, bbox_inches='tight')
+            else:
+                first_plot = list(self.telemetry_plots.values())[0]
+                first_plot['fig'].savefig(filename, dpi=300, bbox_inches='tight')
+            
+            messagebox.showinfo("Erfolg", f"Charts exportiert nach:\n{filename}")
+            
+        except Exception as e:
+            self.show_error("Export Fehler", str(e))
+
+    def reset_view(self):
+        """Setzt Ansicht zurück"""
+        self.search_entry.delete(0, 'end')
+        self.filter_text = ""
+        self.sort_column = None
+        self.sort_reverse = False
+        if self.session:
+            self.fill_laps()
+
+    # === UTILITIES ===
+    
     def format_time(self, time_val):
-        """Formatiert Zeitwerte benutzerfreundlich"""
+        """Formatiert Zeitwerte"""
         if pd.isna(time_val) or time_val is None:
             return "—"
         try:
@@ -616,520 +2104,41 @@ class F1TkApp:
         except:
             return str(time_val)
 
-    # -----------------------------------------------------
-    def format_speed(self, speed_val):
-        """Formatiert Geschwindigkeitswerte"""
-        if pd.isna(speed_val) or speed_val is None:
-            return "—"
-        try:
-            return f"{float(speed_val):.1f}"
-        except:
-            return "—"
-
-    # -----------------------------------------------------
-    def sort_table(self, column):
-        """Sortiert die Tabelle nach Spalte"""
-        if self.sort_column == column:
-            self.sort_reverse = not self.sort_reverse
-        else:
-            self.sort_column = column
-            self.sort_reverse = False
-        self.fill_laps()
-
-    # -----------------------------------------------------
-    def on_filter_changed(self, event=None):
-        """Wird aufgerufen wenn Filter-Text geändert wird"""
-        self.filter_text = self.filter_entry.get().lower()
-        self.fill_laps()
-
-    # -----------------------------------------------------
-    def fill_laps(self):
-        self.lap_table.delete(*self.lap_table.get_children())
-        if self.session is None:
-            return
-
-        # Sortiere nach Rundenzeit (schnellste zuerst) für bessere Übersicht
-        laps = self.session.laps.copy()
-
-        # Berechne beste Runde für jeden Fahrer
-        fastest_laps = {}
-        for driver in laps['Driver'].unique():
-            driver_laps = laps[laps['Driver'] == driver]
-            if not driver_laps.empty:
-                fastest = driver_laps.nsmallest(1, 'LapTime')
-                if not fastest.empty and pd.notna(fastest.iloc[0]['LapTime']):
-                    fastest_laps[driver] = fastest.iloc[0]['LapTime']
-
-        # Sortierung
-        if self.sort_column:
-            if self.sort_column == "Rundenzeit":
-                laps = laps.sort_values(by='LapTime', ascending=self.sort_reverse, na_position='last')
-            elif self.sort_column == "Fahrer":
-                laps = laps.sort_values(by='Driver', ascending=not self.sort_reverse)
-            elif self.sort_column == "Team":
-                laps = laps.sort_values(by='Team', ascending=not self.sort_reverse)
-            elif self.sort_column == "Runde":
-                laps = laps.sort_values(by='LapNumber', ascending=not self.sort_reverse)
-            elif self.sort_column == "Pos":
-                if 'Position' in laps.columns:
-                    laps = laps.sort_values(by='Position', ascending=not self.sort_reverse)
-                else:
-                    laps = laps.sort_values(by='LapTime', ascending=True, na_position='last')
-            else:
-                laps = laps.sort_values(by=['LapTime', 'LapNumber'], ascending=[True, True], na_position='last')
-        else:
-            # Standard: nach Position oder Rundenzeit
-            if 'Position' in laps.columns:
-                laps = laps.sort_values(by=['Position', 'LapNumber'], ascending=[True, True])
-            else:
-                laps = laps.sort_values(by=['LapTime', 'LapNumber'], ascending=[True, True], na_position='last')
-
-        laps = laps.reset_index(drop=True)
-
-        # Finde beste Zeit der Session
-        valid_laps = laps[laps['LapTime'].notna()]
-        if not valid_laps.empty:
-            best_lap_time = valid_laps['LapTime'].min()
-        else:
-            best_lap_time = None
-
-        position_counter = {}
-        for idx, lap in laps.iterrows():
-            driver = lap.get("Driver", "")
-            lap_num_raw = lap.get("LapNumber", "")
-
-            # Filter anwenden
-            if self.filter_text:
-                if self.filter_text not in driver.lower() and self.filter_text not in str(lap.get("Team", "")).lower():
-                    continue
-
-            # Konvertiere LapNumber zu Integer
+    def show_error(self, title, message):
+        """Zeigt Fehlermeldung"""
+        if self.logger:
             try:
-                lap_num = int(float(lap_num_raw)) if pd.notna(lap_num_raw) else 0
-            except (ValueError, TypeError):
-                lap_num = 0
-
-            # Position berechnen
-            if 'Position' in lap and pd.notna(lap['Position']):
-                pos = int(lap['Position'])
-            else:
-                if driver not in position_counter:
-                    position_counter[driver] = len(position_counter) + 1
-                pos = position_counter[driver]
-
-            # Team Name
-            team = lap.get("Team", "")
-            if pd.isna(team) or team == "":
-                team = "—"
-
-            # Rundenzeit
-            lap_time = self.format_time(lap.get("LapTime"))
-
-            # Sektoren
-            s1 = self.format_time(lap.get("Sector1Time"))
-            s2 = self.format_time(lap.get("Sector2Time"))
-            s3 = self.format_time(lap.get("Sector3Time"))
-
-            # Durchschnittsgeschwindigkeit
-            avg_speed = self.format_speed(lap.get("Speed", ""))
-
-            # Ist das die beste Runde des Fahrers?
-            is_best = ""
-            if driver in fastest_laps and pd.notna(lap.get("LapTime")):
-                if lap['LapTime'] == fastest_laps[driver]:
-                    is_best = "⭐"
-
-            # Einzigartige ID für jede Zeile
-            iid = f"{driver}_{lap_num}"
-
-            # Markiere beste Runde der Session
-            tags = []
-            if best_lap_time is not None and pd.notna(lap.get("LapTime")):
-                if lap['LapTime'] == best_lap_time:
-                    tags = ['best_session']
-
-            self.lap_table.insert(
-                "",
-                "end",
-                iid=iid,
-                tags=tags,
-                values=(
-                    str(pos),
-                    driver,
-                    team,
-                    str(lap_num) if lap_num > 0 else "—",
-                    lap_time,
-                    s1,
-                    s2,
-                    s3,
-                    avg_speed,
-                    is_best,
-                ),
-            )
-
-        # Tag-Styling für beste Runde
-        self.lap_table.tag_configure('best_session', background='#2a4a2a')
-
-        # Update Dashboard
-        self.update_dashboard()
-
-    # -----------------------------------------------------
-    def fill_drivers(self):
-        # Lösche alte Buttons
-        for btn in self.driver_buttons:
-            btn.destroy()
-        self.driver_buttons.clear()
-
-        if self.session is None:
-            return
-
-        drivers = sorted(set(self.session.laps["Driver"]))
-        for d in drivers:
-            btn = ctk.CTkButton(self.driver_scroll, text=d,
-                              command=lambda driver=d: self.on_driver_selected(driver),
-                              width=100, height=30,
-                              fg_color=("gray70", "gray30"))
-            btn.pack(pady=2, padx=5, fill="x")
-            self.driver_buttons.append(btn)
-
-        # Update Vergleichs-Comboboxes
-        self.compare_driver1.configure(values=drivers)
-        self.compare_driver2.configure(values=drivers)
-
-    # -----------------------------------------------------
-    def on_driver_selected(self, driver):
-        if self.session is None:
-            return
-
-        laps = self.session.laps.pick_drivers(driver)
-        if laps.empty:
-            return
-
-        lap = laps.pick_fastest()
-        self.current_lap = lap
-        self.plot_lap(lap)
-
-    # -----------------------------------------------------
-    def on_lap_selected(self, event):
-        if self.session is None:
-            return
-        sel = self.lap_table.selection()
-        if not sel:
-            return
-
-        iid = sel[0]
-        driver, lapnum = iid.rsplit("_", 1)
-        try:
-            lapnum = int(float(lapnum))
-        except (ValueError, TypeError):
-            messagebox.showerror("Fehler", f"Ungültige Rundennummer: {lapnum}")
-            return
-
-        lap = self.session.laps[(self.session.laps["Driver"] == driver) & (self.session.laps["LapNumber"] == lapnum)]
-        if lap.empty:
-            return
-        lap = lap.iloc[0]
-        self.plot_lap(lap)
-
-    # -----------------------------------------------------
-    def plot_lap(self, lap):
-        try:
-            tel = lap.get_car_data().add_distance()
-            if tel is None or tel.empty:
-                messagebox.showerror("Keine Telemetrie", "Keine Telemetriedaten für diese Runde verfügbar.")
-                return
-
-            dist = tel["Distance"]
-            driver_name = lap.get('Driver', 'Unbekannt')
-            lap_num = lap.get('LapNumber', '?')
-
-            text_color = self.plot_text_color
-            bg_color = self.plot_bg_color
-            border_color = self.plot_border_color
-
-            # === TAB 1: Geschwindigkeit ===
-            self.ax.clear()
-            self.ax.set_facecolor(bg_color)
-
-            speed = tel["Speed"]
-            self.ax.plot(dist, speed, color=self.accent_color, linewidth=2.5, alpha=0.9)
-            self.ax.fill_between(dist, speed, alpha=0.3, color=self.accent_color)
-
-            self.ax.set_xlabel("Streckendistanz (m)", color=text_color, fontsize=10)
-            self.ax.set_ylabel("Geschwindigkeit (km/h)", color=text_color, fontsize=10)
-            self.ax.set_title(f"🏎️ {driver_name} – Runde {lap_num}",
-                            color=text_color, fontsize=12, fontweight='bold', pad=15)
-            self.ax.grid(True, alpha=0.2, color=border_color, linestyle='--', linewidth=0.5)
-            for spine in self.ax.spines.values():
-                spine.set_color(border_color)
-            self.ax.tick_params(colors=text_color, labelsize=9)
-
-            # === TAB 2: Gas & Bremse ===
-            self.ax2.clear()
-            self.ax2.set_facecolor(bg_color)
-
-            if 'Throttle' in tel.columns and 'Brake' in tel.columns:
-                throttle = tel["Throttle"] * 100
-                brake = tel["Brake"] * 100
-
-                self.ax2.plot(dist, throttle, color='#00d4aa', linewidth=2, label='Gas', alpha=0.8)
-                self.ax2.plot(dist, brake, color='#ff4444', linewidth=2, label='Bremse', alpha=0.8)
-                self.ax2.fill_between(dist, throttle, alpha=0.2, color='#00d4aa')
-                self.ax2.fill_between(dist, brake, alpha=0.2, color='#ff4444')
-                self.ax2.legend(loc='upper right', facecolor=bg_color,
-                              edgecolor=border_color, labelcolor=text_color)
-            else:
-                self.ax2.text(0.5, 0.5, 'Gas- und Bremse-Daten\nnicht verfügbar',
-                            transform=self.ax2.transAxes, ha='center', va='center',
-                            fontsize=11, color=text_color)
-
-            self.ax2.set_xlabel("Streckendistanz (m)", color=text_color, fontsize=10)
-            self.ax2.set_ylabel("Prozent (%)", color=text_color, fontsize=10)
-            self.ax2.set_title(f"⚡ {driver_name} – Gas & Bremse",
-                             color=text_color, fontsize=12, fontweight='bold', pad=15)
-            self.ax2.grid(True, alpha=0.2, color=border_color, linestyle='--', linewidth=0.5)
-            for spine in self.ax2.spines.values():
-                spine.set_color(border_color)
-            self.ax2.tick_params(colors=text_color, labelsize=9)
-            self.ax2.set_ylim(0, 105)
-
-            # === TAB 3: RPM & Gänge ===
-            self.ax3.clear()
-            self.ax3.set_facecolor(bg_color)
-
-            if 'RPM' in tel.columns:
-                rpm = tel["RPM"]
-                ax3_twin = self.ax3.twinx()
-
-                self.ax3.plot(dist, rpm, color='#ffaa00', linewidth=2.5, alpha=0.9, label='RPM')
-                self.ax3.fill_between(dist, rpm, alpha=0.3, color='#ffaa00')
-
-                if 'nGear' in tel.columns:
-                    gear = tel["nGear"]
-                    ax3_twin.plot(dist, gear, color='#00aaff', linewidth=2, alpha=0.8, label='Gang', linestyle='--')
-                    ax3_twin.set_ylabel("Gang", color='#00aaff', fontsize=10)
-                    ax3_twin.tick_params(colors='#00aaff', labelsize=9)
-                    ax3_twin.set_ylim(0.5, 8.5)
-
-                self.ax3.set_ylabel("RPM (U/min)", color='#ffaa00', fontsize=10)
-                self.ax3.tick_params(colors='#ffaa00', labelsize=9)
-            else:
-                self.ax3.text(0.5, 0.5, 'RPM-Daten\nnicht verfügbar',
-                            transform=self.ax3.transAxes, ha='center', va='center',
-                            fontsize=11, color=text_color)
-
-            self.ax3.set_xlabel("Streckendistanz (m)", color=text_color, fontsize=10)
-            self.ax3.set_title(f"🔧 {driver_name} – Motor & Getriebe",
-                             color=text_color, fontsize=12, fontweight='bold', pad=15)
-            self.ax3.grid(True, alpha=0.2, color=border_color, linestyle='--', linewidth=0.5)
-            for spine in self.ax3.spines.values():
-                spine.set_color(border_color)
-
-            # === TAB 4: Vergleich (wird separat gefüllt) ===
-            self.ax4.clear()
-            self.ax4.set_facecolor(bg_color)
-            self.ax4.text(0.5, 0.5, 'Wähle zwei Fahrer aus,\num sie zu vergleichen',
-                        transform=self.ax4.transAxes, ha='center', va='center',
-                        fontsize=12, color=text_color, style='italic')
-            self.ax4.set_xticks([])
-            self.ax4.set_yticks([])
-
-            # Update alle Canvas
-            for fig in [self.fig, self.fig2, self.fig3, self.fig4]:
-                fig.patch.set_facecolor(bg_color)
-
-            self.canvas.draw()
-            self.canvas2.draw()
-            self.canvas3.draw()
-            self.canvas4.draw()
-
-        except Exception as e:
-            messagebox.showerror("Plot Fehler", f"Fehler beim Erstellen der Grafiken:\n{str(e)}")
-
-    # -----------------------------------------------------
-    def compare_drivers(self):
-        """Vergleicht zwei Fahrer direkt"""
-        if self.session is None:
-            messagebox.showerror("Fehler", "Keine Session geladen.")
-            return
-
-        driver1 = self.compare_driver1.get()
-        driver2 = self.compare_driver2.get()
-
-        if not driver1 or not driver2:
-            messagebox.showerror("Fehler", "Bitte wählen Sie beide Fahrer aus.")
-            return
-
-        if driver1 == driver2:
-            messagebox.showerror("Fehler", "Bitte wählen Sie zwei verschiedene Fahrer aus.")
-            return
-
-        try:
-            # Beste Runden beider Fahrer
-            laps1 = self.session.laps.pick_drivers(driver1)
-            laps2 = self.session.laps.pick_drivers(driver2)
-
-            if laps1.empty or laps2.empty:
-                messagebox.showerror("Fehler", "Nicht genügend Daten für den Vergleich verfügbar.")
-                return
-
-            lap1 = laps1.pick_fastest()
-            lap2 = laps2.pick_fastest()
-
-            tel1 = lap1.get_car_data().add_distance()
-            tel2 = lap2.get_car_data().add_distance()
-
-            if tel1 is None or tel1.empty or tel2 is None or tel2.empty:
-                messagebox.showerror("Fehler", "Telemetriedaten für den Vergleich nicht verfügbar.")
-                return
-
-            dist1 = tel1["Distance"]
-            dist2 = tel2["Distance"]
-            speed1 = tel1["Speed"]
-            speed2 = tel2["Speed"]
-
-            # Normalisiere Distanz für besseren Vergleich
-            try:
-                from scipy import interpolate
-                import numpy as np
-
-                max_dist = min(dist1.max(), dist2.max())
-                common_dist = np.linspace(0, max_dist, 500)
-
-                if len(dist1) > 1 and len(dist2) > 1:
-                    f1 = interpolate.interp1d(dist1, speed1, bounds_error=False, fill_value='extrapolate')
-                    f2 = interpolate.interp1d(dist2, speed2, bounds_error=False, fill_value='extrapolate')
-                    speed1_interp = f1(common_dist)
-                    speed2_interp = f2(common_dist)
-                else:
-                    common_dist = dist1
-                    speed1_interp = speed1
-                    speed2_interp = speed2
-            except ImportError:
-                common_dist = dist1
-                speed1_interp = speed1
-                if len(dist2) > 0:
-                    speed2_interp = speed2
-                else:
-                    speed2_interp = speed1
-
-            # Plot Vergleich
-            text_color = self.plot_text_color
-            bg_color = self.plot_bg_color
-            border_color = self.plot_border_color
-
-            self.ax4.clear()
-            self.ax4.set_facecolor(bg_color)
-
-            self.ax4.plot(common_dist, speed1_interp, color='#e10600', linewidth=2.5,
-                         label=f"{driver1} ({self.format_time(lap1['LapTime'])})", alpha=0.9)
-            self.ax4.plot(common_dist, speed2_interp, color='#00aaff', linewidth=2.5,
-                         label=f"{driver2} ({self.format_time(lap2['LapTime'])})", alpha=0.9)
-
-            self.ax4.fill_between(common_dist, speed1_interp, alpha=0.2, color='#e10600')
-            self.ax4.fill_between(common_dist, speed2_interp, alpha=0.2, color='#00aaff')
-
-            self.ax4.set_xlabel("Streckendistanz (m)", color=text_color, fontsize=10)
-            self.ax4.set_ylabel("Geschwindigkeit (km/h)", color=text_color, fontsize=10)
-            self.ax4.set_title(f"⚖️ Vergleich: {driver1} vs {driver2}",
-                            color=text_color, fontsize=12, fontweight='bold', pad=15)
-            self.ax4.legend(loc='upper right', facecolor=bg_color,
-                          edgecolor=border_color, labelcolor=text_color)
-            self.ax4.grid(True, alpha=0.2, color=border_color, linestyle='--', linewidth=0.5)
-            for spine in self.ax4.spines.values():
-                spine.set_color(border_color)
-            self.ax4.tick_params(colors=text_color, labelsize=9)
-
-            self.fig4.patch.set_facecolor(bg_color)
-            self.canvas4.draw()
-
-        except ImportError:
-            messagebox.showerror("Fehler", "Für den Vergleich wird scipy benötigt.\nInstallieren Sie es mit: pip install scipy")
-        except Exception as e:
-            messagebox.showerror("Vergleich Fehler", f"Fehler beim Vergleich:\n{str(e)}")
-
-    # -----------------------------------------------------
-    def export_data(self):
-        """Exportiert Tabellendaten als CSV oder Excel"""
-        if self.session is None:
-            messagebox.showerror("Fehler", "Keine Session geladen.")
-            return
-
-        # Erstelle DataFrame aus Tabelle
-        data = []
-        for item in self.lap_table.get_children():
-            values = self.lap_table.item(item, 'values')
-            data.append({
-                'Position': values[0],
-                'Fahrer': values[1],
-                'Team': values[2],
-                'Runde': values[3],
-                'Rundenzeit': values[4],
-                'Sektor 1': values[5],
-                'Sektor 2': values[6],
-                'Sektor 3': values[7],
-                'Ø Geschwindigkeit': values[8],
-                'Beste': values[9]
-            })
-
-        if not data:
-            messagebox.showerror("Fehler", "Keine Daten zum Exportieren verfügbar.")
-            return
-
-        df = pd.DataFrame(data)
-
-        # Datei-Dialog
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx"), ("All files", "*.*")]
-        )
-
-        if not filename:
-            return
-
-        try:
-            if filename.endswith('.xlsx'):
-                try:
-                    df.to_excel(filename, index=False)
-                    messagebox.showinfo("Erfolg", f"Daten wurden nach {filename} exportiert.")
-                except ImportError:
-                    messagebox.showerror("Fehler", "Für Excel-Export wird openpyxl benötigt.\nInstallieren Sie es mit: pip install openpyxl")
-            else:
-                df.to_csv(filename, index=False, encoding='utf-8-sig')
-                messagebox.showinfo("Erfolg", f"Daten wurden nach {filename} exportiert.")
-        except Exception as e:
-            messagebox.showerror("Export Fehler", f"Fehler beim Exportieren:\n{str(e)}")
-
-    # -----------------------------------------------------
-    def export_plot(self):
-        """Exportiert die aktuelle Grafik als PNG"""
-        # Finde aktiven Tab
-        # Da wir keinen direkten Zugriff auf den aktiven Tab haben, exportieren wir alle Plots
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".png",
-            filetypes=[("PNG files", "*.png"), ("PDF files", "*.pdf"), ("All files", "*.*")]
-        )
-
-        if not filename:
-            return
-
-        try:
-            # Exportiere alle Plots
-            if filename.endswith('.pdf'):
-                from matplotlib.backends.backend_pdf import PdfPages
-                with PdfPages(filename) as pdf:
-                    for fig in [self.fig, self.fig2, self.fig3, self.fig4]:
-                        pdf.savefig(fig, bbox_inches='tight')
-                messagebox.showinfo("Erfolg", f"Alle Grafiken wurden nach {filename} exportiert.")
-            else:
-                # Exportiere nur die erste Grafik (Geschwindigkeit)
-                self.fig.savefig(filename, dpi=300, bbox_inches='tight', facecolor=self.fig.get_facecolor())
-                messagebox.showinfo("Erfolg", f"Grafik wurde nach {filename} exportiert.")
-        except Exception as e:
-            messagebox.showerror("Export Fehler", f"Fehler beim Exportieren:\n{str(e)}")
+                self.logger.error("%s: %s", title, message)
+            except Exception:
+                pass
+        messagebox.showerror(title, message)
+        self.loading.hide()
+
+
+def main():
+    if not check_dependencies():
+        sys.exit(1)
+
+    config = load_config()
+    app_data_dir = get_app_data_dir()
+    logger = setup_logging(app_data_dir)
+    logger.info("Starting F1 Desktop Pro")
+
+    if config.theme:
+        ctk.set_appearance_mode(config.theme)
+    ctk.set_default_color_theme("blue")
+
+    cache_dir = config.cache_dir or str(app_data_dir / "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    fastf1.Cache.enable_cache(cache_dir)
+
+    if not ensure_license(config):
+        sys.exit(1)
+
+    root = ctk.CTk()
+    app = F1DesktopPro(root, config=config, logger=logger)
+    root.mainloop()
 
 
 if __name__ == "__main__":
-    root = ctk.CTk()
-    app = F1TkApp(root)
-    root.mainloop()
+    main()
