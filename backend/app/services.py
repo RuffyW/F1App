@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 import fastf1
 
 from .schemas import Event, SessionResult, SessionSummary, StandingPayload, StandingEntry
-from .timezone import localize_sessions
+from .timezone import localize_sessions, to_local_time
 
 
 def enable_fastf1_cache(cache_dir: str) -> None:
     """Enable FastF1 on-disk cache."""
+    os.makedirs(cache_dir, exist_ok=True)
     fastf1.Cache.enable_cache(cache_dir)
 
 
@@ -50,16 +52,13 @@ def _mock_event(event_id: str, offset_days: int = 0) -> Event:
         end=now + timedelta(days=3),
         sessions=sessions,
     )
-    localized_sessions = localize_sessions(
-        [session.model_dump() for session in event.sessions], event.timezone
-    )
-    enriched_sessions = []
-    for base_session, localized in zip(event.sessions, localized_sessions):
+    enriched_sessions: List[SessionSummary] = []
+    for base_session in event.sessions:
         enriched_sessions.append(
             SessionSummary(
-                **base_session.model_dump(),
-                local_start=localized.get("start"),
-                local_end=localized.get("end"),
+                **base_session.model_dump(exclude={"local_start", "local_end"}),
+                local_start=to_local_time(base_session.start, event.timezone),
+                local_end=to_local_time(base_session.end, event.timezone),
             )
         )
     event.sessions = enriched_sessions

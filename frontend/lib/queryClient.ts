@@ -41,7 +41,9 @@ export function usePersistentQueryClient() {
       queryClient,
       persister,
       maxAge: MAX_AGE,
-    }).finally(() => setReady(true));
+    });
+
+    setReady(true);
   }, [queryClient]);
 
   return { queryClient, ready };

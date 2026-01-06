@@ -1,0 +1,15 @@
+fastf1
+pandas
+numpy
+matplotlib
+customtkinter
+Pillow
+scipy
+openpyxl
+seaborn
+requests
+fastapi
+uvicorn[standard]
+redis
+rq
+pydantic-settings

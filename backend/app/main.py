@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -20,6 +21,14 @@ from .services import (
 from .timezone import localize_sessions
 
 app = FastAPI(title="F1 App API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")

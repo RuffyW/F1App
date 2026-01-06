@@ -1,9 +1,17 @@
+from typing import List
+
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",  # allow extra env vars (e.g., frontend vars) without failing
+    )
 
     fastf1_cache_dir: str = Field(
         default="./.fastf1cache", description="Directory for FastF1 on-disk cache."
@@ -35,12 +43,12 @@ class Settings(BaseSettings):
     )
     ttl_profiles: int = Field(
         default=60 * 60 * 8,
-        description="Cache duration for driver/team profile endpoints (6–12h recommended).",
+        description="Cache duration for driver/team profile endpoints (6-12h recommended).",
     )
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    cors_origins: List[str] = Field(
+        default=["*"],
+        description="Allowed origins for CORS (frontend base URLs).",
+    )
 
 
 settings = Settings()

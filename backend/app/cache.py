@@ -1,8 +1,9 @@
 import json
 from functools import lru_cache
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from .config import settings
 
@@ -18,8 +19,10 @@ TTL_MAP = {
 
 
 @lru_cache(maxsize=1)
-def get_redis_client() -> Redis:
-    """Create a singleton async Redis client."""
+def get_redis_client() -> Optional[Redis]:
+    """Create a singleton async Redis client or None if disabled."""
+    if not settings.redis_url:
+        return None
     return Redis.from_url(settings.redis_url, decode_responses=True)
 
 
@@ -33,16 +36,30 @@ async def get_cached(
 ) -> Any:
     """Fetch data from cache or compute/store via loader."""
     client = get_redis_client()
-    cached_value = await client.get(key)
-    if cached_value:
-        return json.loads(cached_value)
+    if client:
+        try:
+            cached_value = await client.get(key)
+            if cached_value:
+                return json.loads(cached_value)
+        except RedisError:
+            client = None  # disable for the remainder of the request
 
     payload = await loader()
-    await client.set(key, json.dumps(payload, default=str), ex=ttl)
+
+    if client:
+        try:
+            await client.set(key, json.dumps(payload, default=str), ex=ttl)
+        except RedisError:
+            pass
     return payload
 
 
 async def prime_cache(key: str, payload: Any, ttl: int | None) -> None:
     """Prime Redis cache with precomputed payload."""
     client = get_redis_client()
-    await client.set(key, json.dumps(payload, default=str), ex=ttl)
+    if not client:
+        return
+    try:
+        await client.set(key, json.dumps(payload, default=str), ex=ttl)
+    except RedisError:
+        pass
