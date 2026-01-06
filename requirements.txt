@@ -8,3 +8,8 @@ scipy
 openpyxl
 seaborn
 requests
+fastapi
+uvicorn[standard]
+redis
+rq
+pydantic-settings
