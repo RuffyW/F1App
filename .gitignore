@@ -12,3 +12,4 @@ build/
 coverage/
 frontend/.next/
 backend/.pytest_cache/
+.fastf1cache/
